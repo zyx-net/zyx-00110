@@ -100,6 +100,124 @@ class ImportSessionManager:
                 return True, None
         return False, "决策保存失败"
 
+    def resolve_conflicts_batch(self, session_id, resolutions):
+        session = self.storage.get_session(session_id)
+        if not session:
+            return False, "会话不存在", 0
+
+        success_count = 0
+        failed_records = []
+
+        for item in resolutions:
+            record_id = item.get('record_id')
+            record_type = item.get('record_type')
+            row_data = item.get('row_data')
+            decision = item.get('decision')
+
+            if decision not in [ConflictDecision.KEEP_LOCAL, ConflictDecision.OVERWRITE_LOCAL, ConflictDecision.SKIP]:
+                failed_records.append(f"{record_id}: 无效决策 {decision}")
+                continue
+
+            session.set_conflict_resolution(record_id, record_type, row_data, decision)
+            success_count += 1
+
+        session.updated_time = datetime.now().isoformat()
+
+        if session.is_all_conflicts_resolved():
+            session.status = ImportSession.STATUS_WAITING_CONFIRM
+
+        self.storage.save_session(session)
+
+        error_msg = "\n".join(failed_records) if failed_records else None
+        return True, error_msg, success_count
+
+    def get_conflicts_by_type(self, session, record_type):
+        if not session or not session.preview_result:
+            return []
+
+        conflicts = []
+        type_map = {
+            "device": session.preview_result.devices,
+            "repair": session.preview_result.repair_records,
+            "approval": session.preview_result.approval_records
+        }
+
+        if record_type == "all":
+            for category in ["devices", "repair_records", "approval_records"]:
+                for row in session.preview_result.__dict__[category]["conflict"]:
+                    data = row.row_data
+                    record_id = data.get('device_id') or data.get('record_id')
+                    resolution = session.get_conflict_resolution(record_id)
+                    conflicts.append({
+                        'record_id': record_id,
+                        'record_type': category.replace('_', '').replace('records', ''),
+                        'row_data': data,
+                        'reason': row.reason,
+                        'decision': resolution,
+                        'decision_time': self._get_decision_time(session, record_id)
+                    })
+        else:
+            category_key = type_map.get(record_type, {})
+            if category_key:
+                for row in category_key.get("conflict", []):
+                    data = row.row_data
+                    record_id = data.get('device_id') or data.get('record_id')
+                    resolution = session.get_conflict_resolution(record_id)
+                    conflicts.append({
+                        'record_id': record_id,
+                        'record_type': record_type,
+                        'row_data': data,
+                        'reason': row.reason,
+                        'decision': resolution,
+                        'decision_time': self._get_decision_time(session, record_id)
+                    })
+
+        return conflicts
+
+    def _get_decision_time(self, session, record_id):
+        for resolution in session.conflict_resolutions:
+            if resolution.record_id == record_id:
+                return resolution.decision_time
+        return None
+
+    def get_resolved_conflicts_summary(self, session):
+        if not session:
+            return {'total': 0, 'resolved': 0, 'unresolved': 0, 'by_type': {}}
+
+        conflicts = self.get_conflicts_by_type(session, "all")
+
+        summary = {
+            'total': len(conflicts),
+            'resolved': sum(1 for c in conflicts if c['decision'] is not None),
+            'unresolved': sum(1 for c in conflicts if c['decision'] is None),
+            'by_type': {
+                'device': {'total': 0, 'resolved': 0},
+                'repair': {'total': 0, 'resolved': 0},
+                'approval': {'total': 0, 'resolved': 0}
+            },
+            'decisions': {
+                'keep_local': 0,
+                'overwrite_local': 0,
+                'skip': 0
+            }
+        }
+
+        for c in conflicts:
+            rec_type = c['record_type'].lower()
+            if rec_type in summary['by_type']:
+                summary['by_type'][rec_type]['total'] += 1
+                if c['decision']:
+                    summary['by_type'][rec_type]['resolved'] += 1
+
+            if c['decision'] == ConflictDecision.KEEP_LOCAL:
+                summary['decisions']['keep_local'] += 1
+            elif c['decision'] == ConflictDecision.OVERWRITE_LOCAL:
+                summary['decisions']['overwrite_local'] += 1
+            elif c['decision'] == ConflictDecision.SKIP:
+                summary['decisions']['skip'] += 1
+
+        return summary
+
     def validate_dependencies(self, session):
         errors = []
         imported_device_ids = set(d['device_id'] for d in session.raw_data.get('devices', []))
@@ -311,7 +429,7 @@ class ImportSessionManager:
                     'devices': {k: v for k, v in stats.items() if 'device' in k},
                     'repairs': {k: v for k, v in stats.items() if 'repair' in k},
                     'approvals': {k: v for k, v in stats.items() if 'approval' in k},
-                    'conflict_decisions': [r.to_dict() for r in session.conflict_resolutions]
+                    'conflict_decisions': [self._format_conflict_decision(r) for r in session.conflict_resolutions]
                 }
             )
             self.storage.save_session_import_log(import_log)
@@ -319,7 +437,63 @@ class ImportSessionManager:
             return True, f"导入成功！\n备份位置: {backup_path}\n{session.result_message}"
 
         except Exception as e:
+            session.status = ImportSession.STATUS_FAILED
+            session.result_message = f"导入失败: {str(e)}"
+            self.storage.save_session(session)
+
+            error_log = SessionImportLog(
+                log_id=log_id,
+                session_id=session.session_id,
+                import_time=datetime.now().isoformat(),
+                operator=operator,
+                is_supervisor=is_supervisor,
+                total_rows=0,
+                new_rows=0,
+                overwrite_rows=0,
+                skipped_rows=0,
+                conflict_resolved=0,
+                status="failed",
+                message=str(e),
+                details={
+                    'error_type': type(e).__name__,
+                    'error_message': str(e)
+                }
+            )
+            self.storage.save_session_import_log(error_log)
+
             return False, f"导入过程中发生错误: {str(e)}"
+
+    def _format_conflict_decision(self, resolution):
+        decision_map = {
+            ConflictDecision.KEEP_LOCAL: "保留本地",
+            ConflictDecision.OVERWRITE_LOCAL: "覆盖本地",
+            ConflictDecision.SKIP: "跳过"
+        }
+        return {
+            'record_id': resolution.record_id,
+            'record_type': resolution.record_type,
+            'decision': decision_map.get(resolution.decision, resolution.decision),
+            'decision_time': resolution.decision_time
+        }
+
+    def log_undo_result(self, session_id, success, message):
+        log = SessionImportLog(
+            log_id=f"UNDO_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+            session_id=session_id,
+            import_time=datetime.now().isoformat(),
+            operator="system",
+            is_supervisor=False,
+            total_rows=0,
+            new_rows=0,
+            overwrite_rows=0,
+            skipped_rows=0,
+            conflict_resolved=0,
+            status="undone" if success else "undo_failed",
+            message=message,
+            details={'undo_result': 'success' if success else 'failed'}
+        )
+        self.storage.save_session_import_log(log)
+        return True
 
     def _generate_result_message(self, stats):
         parts = []
@@ -366,9 +540,12 @@ class ImportSessionManager:
             session.result_message = "已撤销"
             self.storage.save_session(session)
 
+            self.log_undo_result(session.session_id, True, f"撤销成功，数据已恢复")
+
             return True, f"已撤销会话 {session.session_id} 的导入，数据已恢复"
 
         except Exception as e:
+            self.log_undo_result(session.session_id, False, f"撤销失败: {str(e)}")
             return False, f"撤销失败: {str(e)}"
 
     def cancel_session(self, session_id):

@@ -1,21 +1,21 @@
 {
-  "log_id": "IMP_20260615023351",
-  "session_id": "SESSION_20260615023351",
-  "import_time": "2026-06-15T02:33:51.483420",
+  "log_id": "IMP_20260615031533",
+  "session_id": "SESSION_20260615031533",
+  "import_time": "2026-06-15T03:15:33.653485",
   "operator": "admin",
   "is_supervisor": true,
-  "total_rows": 1,
-  "new_rows": 0,
-  "overwrite_rows": 1,
-  "skipped_rows": 0,
-  "conflict_resolved": 0,
+  "total_rows": 2,
+  "new_rows": 1,
+  "overwrite_rows": 0,
+  "skipped_rows": 1,
+  "conflict_resolved": 1,
   "status": "success",
-  "message": "覆盖 1 条",
+  "message": "新增 1 条, 跳过 1 条",
   "details": {
     "devices": {
-      "new_devices": 0,
-      "overwrite_devices": 1,
-      "skipped_devices": 0
+      "new_devices": 1,
+      "overwrite_devices": 0,
+      "skipped_devices": 1
     },
     "repairs": {
       "new_repairs": 0,
@@ -27,6 +27,13 @@
       "overwrite_approvals": 0,
       "skipped_approvals": 0
     },
-    "conflict_decisions": []
+    "conflict_decisions": [
+      {
+        "record_id": "LOG001",
+        "record_type": "device",
+        "decision": "保留本地",
+        "decision_time": "2026-06-15T03:15:33.648771"
+      }
+    ]
   }
 }

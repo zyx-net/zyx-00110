@@ -424,7 +424,7 @@ class ImportService:
             if validation_errors:
                 preview_result.add_device_invalid(device.to_dict(), "; ".join(validation_errors))
             elif device.device_id in current_device_ids:
-                preview_result.add_device_overwrite(device.to_dict())
+                preview_result.add_device_conflict(device.to_dict(), f"设备编号已存在本地记录: {device.device_id}")
             elif device.device_id in imported_device_ids:
                 preview_result.add_device_conflict(device.to_dict(), f"设备编号重复: {device.device_id}")
             else:
@@ -437,7 +437,7 @@ class ImportService:
             if validation_errors:
                 preview_result.add_repair_invalid(record.to_dict(), "; ".join(validation_errors))
             elif record.record_id in current_repair_ids:
-                preview_result.add_repair_overwrite(record.to_dict())
+                preview_result.add_repair_conflict(record.to_dict(), f"维修记录ID已存在本地记录: {record.record_id}")
             else:
                 preview_result.add_repair_new(record.to_dict())
 
@@ -447,7 +447,7 @@ class ImportService:
             if validation_errors:
                 preview_result.add_approval_invalid(record.to_dict(), "; ".join(validation_errors))
             elif record.record_id in current_approval_ids:
-                preview_result.add_approval_overwrite(record.to_dict())
+                preview_result.add_approval_conflict(record.to_dict(), f"审批记录ID已存在本地记录: {record.record_id}")
             else:
                 preview_result.add_approval_new(record.to_dict())
 

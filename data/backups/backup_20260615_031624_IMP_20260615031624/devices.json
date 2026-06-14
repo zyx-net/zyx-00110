@@ -9,10 +9,10 @@
   },
   {
     "device_id": "REV002",
-    "name": "Reviewer Device 2 Imported",
-    "status": "已停机",
-    "abnormal_desc": "conflict two",
-    "create_time": "2026-06-15T00:00:00",
-    "update_time": "2026-06-15T00:00:00"
+    "name": "Reviewer Device 2",
+    "status": "正常",
+    "abnormal_desc": "",
+    "create_time": "2026-06-15T03:16:24.765086",
+    "update_time": "2026-06-15T03:16:24.765092"
   }
 ]

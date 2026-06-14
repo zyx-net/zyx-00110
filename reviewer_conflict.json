@@ -2,8 +2,19 @@
   "devices": [
     {
       "device_id": "REV001",
-      "name": "Reviewer Device",
-      "status": "已停机"
+      "name": "Reviewer Device 1 Imported",
+      "status": "已停机",
+      "abnormal_desc": "conflict one",
+      "create_time": "2026-06-15T00:00:00",
+      "update_time": "2026-06-15T00:00:00"
+    },
+    {
+      "device_id": "REV002",
+      "name": "Reviewer Device 2 Imported",
+      "status": "已停机",
+      "abnormal_desc": "conflict two",
+      "create_time": "2026-06-15T00:00:00",
+      "update_time": "2026-06-15T00:00:00"
     }
   ],
   "repair_records": [],

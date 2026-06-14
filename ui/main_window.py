@@ -232,6 +232,10 @@ class DeviceInspectionApp:
         self.session_operator_label = ttk.Label(self.session_info_frame, text="-")
         self.session_operator_label.grid(row=3, column=1, padx=5, pady=5, sticky=tk.W)
 
+        ttk.Label(self.session_info_frame, text="冲突进度:").grid(row=4, column=0, padx=5, pady=5, sticky=tk.W)
+        self.conflict_progress_label = ttk.Label(self.session_info_frame, text="-")
+        self.conflict_progress_label.grid(row=4, column=1, padx=5, pady=5, sticky=tk.W)
+
         btn_frame = ttk.Frame(self.session_frame)
         btn_frame.pack(fill=tk.X, padx=10, pady=5)
 
@@ -240,6 +244,29 @@ class DeviceInspectionApp:
         ttk.Button(btn_frame, text="提交导入", command=self.commit_session_import).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="撤销导入", command=self.undo_session_import).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="取消会话", command=self.cancel_current_session).pack(side=tk.LEFT, padx=5)
+
+        filter_frame = ttk.LabelFrame(self.session_frame, text="冲突筛选与批量操作")
+        filter_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(filter_frame, text="记录类型:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        self.session_filter_type = ttk.Combobox(filter_frame, values=["全部", "设备", "维修", "审批"], width=15)
+        self.session_filter_type.current(0)
+        self.session_filter_type.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+        self.session_filter_type.bind("<<ComboboxSelected>>", self._on_session_filter_changed)
+
+        ttk.Label(filter_frame, text="决策状态:").grid(row=0, column=2, padx=5, pady=5, sticky=tk.W)
+        self.session_filter_decision = ttk.Combobox(filter_frame, values=["全部", "未决策", "已决策"], width=15)
+        self.session_filter_decision.current(0)
+        self.session_filter_decision.grid(row=0, column=3, padx=5, pady=5, sticky=tk.W)
+        self.session_filter_decision.bind("<<ComboboxSelected>>", self._on_session_filter_changed)
+
+        batch_btn_frame = ttk.Frame(filter_frame)
+        batch_btn_frame.grid(row=0, column=4, columnspan=2, padx=5, pady=5, sticky=tk.W)
+
+        ttk.Button(batch_btn_frame, text="批量保留本地", command=lambda: self._batch_set_decision(ConflictDecision.KEEP_LOCAL)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(batch_btn_frame, text="批量覆盖本地", command=lambda: self._batch_set_decision(ConflictDecision.OVERWRITE_LOCAL)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(batch_btn_frame, text="批量跳过", command=lambda: self._batch_set_decision(ConflictDecision.SKIP)).pack(side=tk.LEFT, padx=2)
+        ttk.Button(batch_btn_frame, text="查看已选决策", command=self._view_selected_decisions).pack(side=tk.LEFT, padx=2)
 
         self.session_notebook = ttk.Notebook(self.session_frame)
         self.session_notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
@@ -287,6 +314,10 @@ class DeviceInspectionApp:
         self._setup_data_tree(self.approval_new_frame)
         self._setup_data_tree(self.approval_overwrite_frame)
         self._setup_data_tree(self.approval_invalid_frame)
+
+        self.current_filter_type = "全部"
+        self.current_filter_decision = "全部"
+        self.filtered_conflicts = []
 
     def _setup_data_tree(self, parent):
         tree = ttk.Treeview(parent, columns=("ID", "详情"), show="headings")
@@ -388,6 +419,11 @@ class DeviceInspectionApp:
         if session.preview_result:
             self._populate_preview_results(session.preview_result)
 
+            summary = self.session_manager.get_resolved_conflicts_summary(session)
+            self.conflict_progress_label.config(
+                text=f"共 {summary['total']} 条冲突，已决策 {summary['resolved']} 条，未决策 {summary['unresolved']} 条"
+            )
+
     def _populate_preview_results(self, preview):
         trees_to_clear = [
             (self.device_new_frame, 'tree'), (self.device_overwrite_frame, 'tree'),
@@ -477,6 +513,162 @@ class DeviceInspectionApp:
                 }.get(decision, "未决策")
                 tree.insert("", tk.END, values=(row_type, row_id, row.reason, decision_text))
 
+    def _on_session_filter_changed(self, event=None):
+        self.current_filter_type = self.session_filter_type.get()
+        self.current_filter_decision = self.session_filter_decision.get()
+        self._update_conflict_filter()
+
+    def _update_conflict_filter(self):
+        if not self.current_session:
+            return
+
+        type_map = {
+            "全部": "all",
+            "设备": "device",
+            "维修": "repair",
+            "审批": "approval"
+        }
+
+        record_type = type_map.get(self.current_filter_type, "all")
+        self.filtered_conflicts = self.session_manager.get_conflicts_by_type(self.current_session, record_type)
+
+        if self.current_filter_decision == "未决策":
+            self.filtered_conflicts = [c for c in self.filtered_conflicts if c['decision'] is None]
+        elif self.current_filter_decision == "已决策":
+            self.filtered_conflicts = [c for c in self.filtered_conflicts if c['decision'] is not None]
+
+        self._update_filtered_conflict_display()
+
+    def _update_filtered_conflict_display(self):
+        for frame in [self.device_conflict_frame, self.repair_conflict_frame, self.approval_conflict_frame]:
+            if hasattr(frame, 'tree'):
+                tree = frame.tree
+                for item in tree.get_children():
+                    tree.delete(item)
+
+        type_to_frame = {
+            "设备": self.device_conflict_frame,
+            "维修": self.repair_conflict_frame,
+            "审批": self.approval_conflict_frame
+        }
+
+        for conflict in self.filtered_conflicts:
+            rec_type = conflict['record_type']
+            if rec_type in ["device", "devices"]:
+                rec_type = "设备"
+            elif rec_type in ["repair", "repairs"]:
+                rec_type = "维修"
+            elif rec_type in ["approval", "approvals"]:
+                rec_type = "审批"
+
+            if rec_type in type_to_frame:
+                frame = type_to_frame[rec_type]
+                if hasattr(frame, 'tree'):
+                    tree = frame.tree
+                    decision_text = {
+                        ConflictDecision.KEEP_LOCAL: "保留本地",
+                        ConflictDecision.OVERWRITE_LOCAL: "覆盖本地",
+                        ConflictDecision.SKIP: "跳过"
+                    }.get(conflict['decision'], "未决策")
+                    tree.insert("", tk.END, values=(rec_type, conflict['record_id'], conflict['reason'], decision_text))
+
+        total = len(self.filtered_conflicts)
+        resolved = sum(1 for c in self.filtered_conflicts if c['decision'] is not None)
+        self.conflict_progress_label.config(text=f"共 {total} 条冲突，已决策 {resolved} 条")
+
+    def _batch_set_decision(self, decision):
+        if not self.current_session:
+            messagebox.showwarning("提示", "没有活动会话")
+            return
+
+        type_map = {
+            "全部": "all",
+            "设备": "device",
+            "维修": "repair",
+            "审批": "approval"
+        }
+
+        record_type = type_map.get(self.current_filter_type, "all")
+        all_conflicts = self.session_manager.get_conflicts_by_type(self.current_session, record_type)
+
+        if self.current_filter_decision == "未决策":
+            target_conflicts = [c for c in all_conflicts if c['decision'] is None]
+        elif self.current_filter_decision == "已决策":
+            target_conflicts = []
+        else:
+            target_conflicts = all_conflicts
+
+        if not target_conflicts:
+            decision_text = {
+                ConflictDecision.KEEP_LOCAL: "保留本地",
+                ConflictDecision.OVERWRITE_LOCAL: "覆盖本地",
+                ConflictDecision.SKIP: "跳过"
+            }.get(decision, decision)
+            messagebox.showinfo("提示", f"当前筛选条件下没有可处理的冲突项")
+            return
+
+        resolutions = []
+        for conflict in target_conflicts:
+            resolutions.append({
+                'record_id': conflict['record_id'],
+                'record_type': conflict['record_type'],
+                'row_data': conflict['row_data'],
+                'decision': decision
+            })
+
+        success, error_msg, count = self.session_manager.resolve_conflicts_batch(
+            self.current_session.session_id,
+            resolutions
+        )
+
+        if success:
+            decision_text = {
+                ConflictDecision.KEEP_LOCAL: "保留本地",
+                ConflictDecision.OVERWRITE_LOCAL: "覆盖本地",
+                ConflictDecision.SKIP: "跳过"
+            }.get(decision, decision)
+            messagebox.showinfo("批量决策", f"成功设置 {count} 条冲突项为「{decision_text}」")
+            if error_msg:
+                messagebox.showwarning("部分失败", f"以下记录设置失败:\n{error_msg}")
+            self.refresh_session_view()
+        else:
+            messagebox.showerror("批量决策失败", error_msg or "未知错误")
+
+    def _view_selected_decisions(self):
+        if not self.current_session:
+            messagebox.showwarning("提示", "没有活动会话")
+            return
+
+        summary = self.session_manager.get_resolved_conflicts_summary(self.current_session)
+
+        if summary['total'] == 0:
+            messagebox.showinfo("决策汇总", "当前会话没有冲突项")
+            return
+
+        decision_text = {
+            ConflictDecision.KEEP_LOCAL: "保留本地",
+            ConflictDecision.OVERWRITE_LOCAL: "覆盖本地",
+            ConflictDecision.SKIP: "跳过"
+        }
+
+        lines = [
+            f"冲突总数: {summary['total']}",
+            f"已决策: {summary['resolved']}",
+            f"未决策: {summary['unresolved']}",
+            "",
+            "决策汇总:",
+            f"  保留本地: {summary['decisions']['keep_local']} 条",
+            f"  覆盖本地: {summary['decisions']['overwrite_local']} 条",
+            f"  跳过: {summary['decisions']['skip']} 条",
+            "",
+            "按类型统计:"
+        ]
+
+        for rec_type, stats in summary['by_type'].items():
+            lines.append(f"  {rec_type}: 共 {stats['total']} 条，已决策 {stats['resolved']} 条")
+
+        messagebox.showinfo("决策汇总", "\n".join(lines))
+
     def create_new_session(self):
         if not self.current_user:
             messagebox.showwarning("提示", "请先验证身份")
@@ -498,7 +690,7 @@ class DeviceInspectionApp:
 
         session, msg = self.session_manager.create_session(
             file_path=file_path,
-            file_type=preview_result and 'json' or 'csv',
+            file_type='json',
             operator=self.current_user,
             is_supervisor=self.is_supervisor,
             parsed_data=raw_data,
@@ -524,6 +716,7 @@ class DeviceInspectionApp:
                 self.session_file_label.config(text="-")
                 self.session_status_label.config(text="-")
                 self.session_operator_label.config(text="-")
+                self.conflict_progress_label.config(text="-")
 
     def commit_session_import(self):
         if not self.current_session:
@@ -557,6 +750,7 @@ class DeviceInspectionApp:
             self.session_file_label.config(text="-")
             self.session_status_label.config(text="-")
             self.session_operator_label.config(text="-")
+            self.conflict_progress_label.config(text="-")
         else:
             messagebox.showerror("导入失败", msg)
 
@@ -604,6 +798,7 @@ class DeviceInspectionApp:
             self.session_file_label.config(text="-")
             self.session_status_label.config(text="-")
             self.session_operator_label.config(text="-")
+            self.conflict_progress_label.config(text="-")
         else:
             messagebox.showerror("错误", msg)
         
@@ -864,7 +1059,7 @@ class DeviceInspectionApp:
             messagebox.showwarning("提示", "请先选择一个设备")
             return None
         item = self.device_tree.item(selected[0])
-        return item["values"][0]
+        return item["values"][0]]
     
     def add_device(self):
         device_id = self.device_id_entry.get().strip()

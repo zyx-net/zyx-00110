@@ -953,6 +953,9 @@ def test_session_conflict_resolution():
     preview_result, raw_data, error = import_service.preview_import_session(conflict_file, "admin", True)
     assert error is None, f"Preview failed: {error}"
     
+    assert len(preview_result.devices["conflict"]) == 1, "Should detect conflict for same ID"
+    print(f"  {PASS} Conflict detected: {len(preview_result.devices['conflict'])} conflict items")
+    
     session, _ = session_manager.create_session(
         file_path=conflict_file,
         file_type='json',
@@ -962,11 +965,8 @@ def test_session_conflict_resolution():
         preview_result=preview_result
     )
     
-    assert len(preview_result.devices["overwrite"]) == 1, "Should detect overwrite"
-    print(f"  {PASS} Conflict detected: {len(preview_result.devices['overwrite'])} overwrite items")
-    
     print("\n[Step 4] Set conflict resolution to KEEP_LOCAL")
-    device_data = preview_result.devices["overwrite"][0].row_data
+    device_data = preview_result.devices["conflict"][0].row_data
     success, error = session_manager.resolve_conflict(
         session.session_id,
         "CONFLICT001",
@@ -1038,6 +1038,9 @@ def test_session_overwrite_local():
     preview_result, raw_data, error = import_service.preview_import_session(overwrite_file, "admin", True)
     assert error is None, f"Preview failed: {error}"
     
+    assert len(preview_result.devices["conflict"]) == 1, "Should detect conflict for same ID"
+    print(f"  {PASS} Conflict detected")
+    
     session, _ = session_manager.create_session(
         file_path=overwrite_file,
         file_type='json',
@@ -1046,8 +1049,10 @@ def test_session_overwrite_local():
         parsed_data=raw_data,
         preview_result=preview_result
     )
+    print(f"  {PASS} Session created")
     
-    device_data = preview_result.devices["overwrite"][0].row_data
+    print("\n[Step 4] Resolve conflict - overwrite local")
+    device_data = preview_result.devices["conflict"][0].row_data
     session_manager.resolve_conflict(
         session.session_id,
         "OVER001",
@@ -1123,7 +1128,7 @@ def test_session_skip():
         preview_result=preview_result
     )
 
-    device_data = preview_result.devices["overwrite"][0].row_data
+    device_data = preview_result.devices["conflict"][0].row_data
     success, error = session_manager.resolve_conflict(
         session.session_id,
         "SKIP001",
@@ -1414,6 +1419,497 @@ def test_session_log_export():
     print("=" * 60)
 
 
+def test_session_conflict_unified():
+    print("\n" + "=" * 60)
+    print("Session Conflict Unified Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    
+    print("\n[Step 1] Create existing device with same ID")
+    service.add_device("CONFLICT001", "Existing Device")
+    device = service.find_device("CONFLICT001")
+    original_status = device.status
+    print(f"  {PASS} Created device with status: {original_status}")
+    
+    print("\n[Step 2] Create JSON with same device ID")
+    export_dir = service.config.export_dir
+    test_data = {
+        "devices": [
+            {
+                "device_id": "CONFLICT001",
+                "name": "Existing Device",
+                "status": DeviceStatus.STOPPED.value,
+                "abnormal_desc": "Updated abnormal",
+                "create_time": "2026-01-01T00:00:00",
+                "update_time": "2026-01-01T00:00:00"
+            }
+        ],
+        "repair_records": [],
+        "approval_records": []
+    }
+    conflict_file = os.path.join(export_dir, "conflict_unified_test.json")
+    with open(conflict_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    print(f"  {PASS} Created conflict test file")
+    
+    print("\n[Step 3] Create session and verify conflict is detected (not overwrite)")
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(conflict_file, "admin", True)
+    assert error is None, f"Preview failed: {error}"
+    
+    assert len(preview_result.devices["conflict"]) == 1, "Should detect conflict for same ID"
+    assert len(preview_result.devices["overwrite"]) == 0, "Should NOT detect overwrite for same ID"
+    print(f"  {PASS} Conflict detected correctly, no overwrite items")
+    
+    session, _ = session_manager.create_session(
+        file_path=conflict_file,
+        file_type='json',
+        operator="admin",
+        is_supervisor=True,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    print(f"  {PASS} Session created with conflict items")
+    
+    print("\n[Step 4] Verify is_all_conflicts_resolved returns False initially")
+    assert not session.is_all_conflicts_resolved(), "Should not be resolved initially"
+    print(f"  {PASS} Unresolved conflicts count: {session.get_unresolved_conflicts_count()}")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Conflict Unified Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_session_batch_decision():
+    print("\n" + "=" * 60)
+    print("Session Batch Decision Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    
+    print("\n[Step 1] Create existing devices")
+    service.add_device("BATCH001", "Batch Test Device 1")
+    service.add_device("BATCH002", "Batch Test Device 2")
+    service.add_device("BATCH003", "Batch Test Device 3")
+    print(f"  {PASS} Created 3 devices")
+    
+    print("\n[Step 2] Create JSON with same device IDs")
+    export_dir = service.config.export_dir
+    test_data = {
+        "devices": [
+            {
+                "device_id": "BATCH001",
+                "name": "Batch Device 1",
+                "status": DeviceStatus.STOPPED.value,
+                "abnormal_desc": "Conflict 1",
+                "create_time": "2026-01-01T00:00:00",
+                "update_time": "2026-01-01T00:00:00"
+            },
+            {
+                "device_id": "BATCH002",
+                "name": "Batch Device 2",
+                "status": DeviceStatus.STOPPED.value,
+                "abnormal_desc": "Conflict 2",
+                "create_time": "2026-01-01T00:00:00",
+                "update_time": "2026-01-01T00:00:00"
+            },
+            {
+                "device_id": "BATCH003",
+                "name": "Batch Device 3",
+                "status": DeviceStatus.STOPPED.value,
+                "abnormal_desc": "Conflict 3",
+                "create_time": "2026-01-01T00:00:00",
+                "update_time": "2026-01-01T00:00:00"
+            }
+        ],
+        "repair_records": [],
+        "approval_records": []
+    }
+    batch_file = os.path.join(export_dir, "batch_test.json")
+    with open(batch_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    print(f"  {PASS} Created batch test file")
+    
+    print("\n[Step 3] Create session and resolve conflicts in batch")
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(batch_file, "admin", True)
+    session, _ = session_manager.create_session(
+        file_path=batch_file,
+        file_type='json',
+        operator="admin",
+        is_supervisor=True,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    
+    assert session.get_unresolved_conflicts_count() == 3, "Should have 3 unresolved conflicts"
+    print(f"  {PASS} Session created with 3 unresolved conflicts")
+    
+    print("\n[Step 4] Test batch resolution")
+    conflicts = session_manager.get_conflicts_by_type(session, "all")
+    resolutions = [
+        {'record_id': 'BATCH001', 'record_type': 'device', 'row_data': conflicts[0]['row_data'], 'decision': ConflictDecision.KEEP_LOCAL},
+        {'record_id': 'BATCH002', 'record_type': 'device', 'row_data': conflicts[1]['row_data'], 'decision': ConflictDecision.SKIP}
+    ]
+    
+    success, error_msg, count = session_manager.resolve_conflicts_batch(session.session_id, resolutions)
+    assert success, f"Batch resolution failed: {error_msg}"
+    assert count == 2, f"Should resolve 2 conflicts, got {count}"
+    print(f"  {PASS} Batch resolved {count} conflicts")
+    
+    session = session_manager.get_session(session.session_id)
+    assert session.get_unresolved_conflicts_count() == 1, "Should have 1 unresolved conflict remaining"
+    print(f"  {PASS} Remaining unresolved conflicts: 1")
+    
+    print("\n[Step 5] Test batch filtering by type")
+    device_conflicts = session_manager.get_conflicts_by_type(session, "device")
+    assert len(device_conflicts) == 3, "Should have 3 device conflicts"
+    print(f"  {PASS} Filtered by type returned {len(device_conflicts)} conflicts")
+    
+    print("\n[Step 6] Test decision summary")
+    summary = session_manager.get_resolved_conflicts_summary(session)
+    assert summary['total'] == 3, "Should have 3 total conflicts"
+    assert summary['resolved'] == 2, "Should have 2 resolved"
+    assert summary['decisions']['keep_local'] == 1, "Should have 1 keep_local"
+    assert summary['decisions']['skip'] == 1, "Should have 1 skip"
+    print(f"  {PASS} Decision summary: total={summary['total']}, resolved={summary['resolved']}")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Batch Decision Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_session_restart_recovery():
+    print("\n" + "=" * 60)
+    print("Session Restart Recovery Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    
+    print("\n[Step 1] Create session with conflicts")
+    service.add_device("RECOVER001", "Recovery Test Device")
+    export_dir = service.config.export_dir
+    test_data = {
+        "devices": [
+            {
+                "device_id": "RECOVER001",
+                "name": "Recovery Test Device",
+                "status": DeviceStatus.STOPPED.value,
+                "abnormal_desc": "Updated",
+                "create_time": "2026-01-01T00:00:00",
+                "update_time": "2026-01-01T00:00:00"
+            }
+        ],
+        "repair_records": [],
+        "approval_records": []
+    }
+    recover_file = os.path.join(export_dir, "recover_test.json")
+    with open(recover_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(recover_file, "admin", True)
+    session, _ = session_manager.create_session(
+        file_path=recover_file,
+        file_type='json',
+        operator="admin",
+        is_supervisor=True,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    
+    session_manager.resolve_conflict(session.session_id, "RECOVER001", "device", 
+                                    preview_result.devices["conflict"][0].row_data, 
+                                    ConflictDecision.KEEP_LOCAL)
+    print(f"  {PASS} Session created and conflict resolved")
+    
+    print("\n[Step 2] Simulate restart - recreate services")
+    del service
+    del session_manager
+    del import_service
+    
+    service2 = DeviceService()
+    session_manager2 = ImportSessionManager(service2.storage, service2)
+    
+    print("\n[Step 3] Recover session after restart")
+    recovered_session = session_manager2.check_active_session()
+    assert recovered_session is not None, "Session should be recovered"
+    assert recovered_session.session_id == session.session_id, "Session ID should match"
+    print(f"  {PASS} Session recovered: {recovered_session.session_id}")
+    
+    print("\n[Step 4] Verify conflict resolution persisted")
+    resolution = recovered_session.get_conflict_resolution("RECOVER001")
+    assert resolution == ConflictDecision.KEEP_LOCAL, "Resolution should persist"
+    print(f"  {PASS} Conflict resolution persisted: {resolution}")
+    
+    print("\n[Step 5] Verify all conflicts are resolved")
+    assert recovered_session.is_all_conflicts_resolved(), "All conflicts should be resolved"
+    print(f"  {PASS} All conflicts resolved after recovery")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Restart Recovery Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_session_undo_after_import():
+    print("\n" + "=" * 60)
+    print("Session Undo After Import Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    
+    print("\n[Step 1] Create initial device")
+    service.add_device("UNDO001", "Undo Test Device 1")
+    initial_count = len(service.devices)
+    print(f"  {PASS} Created {initial_count} devices")
+    
+    print("\n[Step 2] Create session and import new data")
+    export_dir = service.config.export_dir
+    test_data = {
+        "devices": [
+            {
+                "device_id": "UNDO001",
+                "name": "Undo Test Device 1",
+                "status": DeviceStatus.NORMAL.value,
+                "abnormal_desc": "",
+                "create_time": "2026-01-01T00:00:00",
+                "update_time": "2026-01-01T00:00:00"
+            },
+            {
+                "device_id": "UNDO002",
+                "name": "Undo Test Device 2",
+                "status": DeviceStatus.NORMAL.value,
+                "abnormal_desc": "",
+                "create_time": "2026-01-01T00:00:00",
+                "update_time": "2026-01-01T00:00:00"
+            }
+        ],
+        "repair_records": [],
+        "approval_records": []
+    }
+    undo_file = os.path.join(export_dir, "undo_test.json")
+    with open(undo_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(undo_file, "admin", True)
+    session, _ = session_manager.create_session(
+        file_path=undo_file,
+        file_type='json',
+        operator="admin",
+        is_supervisor=True,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    
+    session_manager.resolve_conflict(session.session_id, "UNDO001", "device", 
+                                    preview_result.devices["conflict"][0].row_data,
+                                    ConflictDecision.KEEP_LOCAL)
+    
+    success, msg = session_manager.commit_import(session, "admin", True)
+    assert success, f"Import failed: {msg}"
+    print(f"  {PASS} Import committed")
+    
+    session = session_manager.get_session(session.session_id)
+    
+    service.devices = service.storage.load_devices()
+    assert len(service.devices) == initial_count + 1, f"Should have {initial_count + 1} devices"
+    print(f"  {PASS} Data imported, now has {len(service.devices)} devices")
+    
+    print("\n[Step 3] Undo the import")
+    success, msg = session_manager.undo_import(session)
+    assert success, f"Undo failed: {msg}"
+    print(f"  {PASS} Import undone: {msg}")
+    
+    service.devices = service.storage.load_devices()
+    assert len(service.devices) == initial_count, f"Should have {initial_count} devices after undo"
+    device2 = service.find_device("UNDO002")
+    assert device2 is None, "UNDO002 should not exist after undo"
+    print(f"  {PASS} Data restored to {len(service.devices)} devices")
+    
+    print("\n[Step 4] Verify cannot undo twice")
+    success, msg = session_manager.undo_import(session)
+    assert not success, "Should not be able to undo twice"
+    print(f"  {PASS} Cannot undo twice: {msg}")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Undo After Import Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_session_log_export():
+    print("\n" + "=" * 60)
+    print("Session Log Export Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    
+    print("\n[Step 1] Create session and import with conflict decisions")
+    service.add_device("LOG001", "Log Test Device")
+    export_dir = service.config.export_dir
+    test_data = {
+        "devices": [
+            {
+                "device_id": "LOG001",
+                "name": "Log Test Device",
+                "status": DeviceStatus.STOPPED.value,
+                "abnormal_desc": "Test",
+                "create_time": "2026-01-01T00:00:00",
+                "update_time": "2026-01-01T00:00:00"
+            },
+            {
+                "device_id": "LOG002",
+                "name": "Log Test Device 2",
+                "status": DeviceStatus.NORMAL.value,
+                "abnormal_desc": "",
+                "create_time": "2026-01-01T00:00:00",
+                "update_time": "2026-01-01T00:00:00"
+            }
+        ],
+        "repair_records": [],
+        "approval_records": []
+    }
+    log_file = os.path.join(export_dir, "log_test.json")
+    with open(log_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(log_file, "admin", True)
+    session, _ = session_manager.create_session(
+        file_path=log_file,
+        file_type='json',
+        operator="admin",
+        is_supervisor=True,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    
+    session_manager.resolve_conflict(session.session_id, "LOG001", "device", 
+                                    preview_result.devices["conflict"][0].row_data,
+                                    ConflictDecision.KEEP_LOCAL)
+    
+    success, msg = session_manager.commit_import(session, "admin", True)
+    assert success, f"Import failed: {msg}"
+    print(f"  {PASS} Import committed")
+    
+    print("\n[Step 2] Check session logs")
+    logs = session_manager.get_session_logs()
+    assert len(logs) > 0, "Should have session logs"
+    print(f"  {PASS} Found {len(logs)} session log(s)")
+    
+    log = logs[-1]
+    assert log.session_id == session.session_id, "Log session ID should match"
+    assert log.status == "success", "Log status should be success"
+    assert log.conflict_resolved == 1, "Should record 1 conflict resolution"
+    assert 'conflict_decisions' in log.details, "Should have conflict decisions in details"
+    print(f"  {PASS} Log details verified: status={log.status}, conflicts={log.conflict_resolved}")
+    
+    print("\n[Step 3] Export log to file")
+    export_file = os.path.join(export_dir, "session_log_export.json")
+    success = session_manager.export_session_log(log, export_file)
+    assert success, "Log export failed"
+    assert os.path.exists(export_file), "Log file should exist"
+    print(f"  {PASS} Log exported to {export_file}")
+    
+    with open(export_file, 'r', encoding='utf-8') as f:
+        exported_data = json.load(f)
+    assert exported_data['session_id'] == session.session_id, "Exported log should match"
+    assert 'conflict_decisions' in exported_data['details'], "Exported log should have conflict decisions"
+    print(f"  {PASS} Exported log content verified")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Log Export Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_session_permission_block():
+    print("\n" + "=" * 60)
+    print("Session Permission Block Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    
+    print("\n[Step 1] Create test data")
+    service.add_device("PERM001", "Permission Test Device")
+    export_dir = service.config.export_dir
+    test_data = {
+        "devices": [
+            {
+                "device_id": "PERM001",
+                "name": "Permission Test Device",
+                "status": DeviceStatus.STOPPED.value,
+                "abnormal_desc": "Test",
+                "create_time": "2026-01-01T00:00:00",
+                "update_time": "2026-01-01T00:00:00"
+            }
+        ],
+        "repair_records": [],
+        "approval_records": []
+    }
+    perm_file = os.path.join(export_dir, "perm_test.json")
+    with open(perm_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    print("\n[Step 2] Create session as non-supervisor")
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(perm_file, "RegularUser", False)
+    assert error is None, f"Preview should succeed for non-supervisor: {error}"
+    
+    session, _ = session_manager.create_session(
+        file_path=perm_file,
+        file_type='json',
+        operator="RegularUser",
+        is_supervisor=False,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    print(f"  {PASS} Session created by non-supervisor")
+    
+    print("\n[Step 3] Resolve conflict as non-supervisor")
+    session_manager.resolve_conflict(session.session_id, "PERM001", "device", 
+                                    preview_result.devices["conflict"][0].row_data,
+                                    ConflictDecision.KEEP_LOCAL)
+    
+    print("\n[Step 4] Try to commit as non-supervisor - should fail")
+    success, msg = session_manager.commit_import(session, "RegularUser", False)
+    assert not success, "Non-supervisor should not be able to commit"
+    assert "权限不足" in msg or "权限" in msg, f"Wrong error message: {msg}"
+    print(f"  {PASS} Non-supervisor blocked from commit: {msg}")
+    
+    print("\n[Step 5] Try to commit as different non-supervisor - should still fail")
+    success, msg = session_manager.commit_import(session, "AnotherUser", False)
+    assert not success, "Different non-supervisor should not be able to commit"
+    print(f"  {PASS} Different non-supervisor blocked: {msg}")
+    
+    print("\n[Step 6] Commit as supervisor - should succeed")
+    success, msg = session_manager.commit_import(session, "admin", True)
+    assert success, f"Supervisor should be able to commit: {msg}"
+    print(f"  {PASS} Supervisor can commit")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Permission Block Test: {PASS} All Passed")
+    print("=" * 60)
+
+
 if __name__ == "__main__":
     try:
         test_nameerror_fix()
@@ -1437,6 +1933,10 @@ if __name__ == "__main__":
         test_session_file_integrity_check()
         test_session_undo_after_restart()
         test_session_log_export()
+        test_session_conflict_unified()
+        test_session_batch_decision()
+        test_session_restart_recovery()
+        test_session_undo_after_import()
         print("\n" + "=" * 60)
         print(f"All Tests Passed!")
         print("=" * 60)
