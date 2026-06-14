@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from service.device_service import DeviceService, SUPERVISORS
+from service.import_service import ImportService
 from model.status import DeviceStatus
 
 
@@ -11,8 +12,13 @@ class DeviceInspectionApp:
         self.root.geometry("1200x800")
         
         self.service = DeviceService()
+        self.import_service = ImportService(self.service.storage, self.service)
+        
+        self.current_user = ""
+        self.is_supervisor = False
         
         self.setup_ui()
+        self._check_rollback_on_startup()
         
     def setup_ui(self):
         self.notebook = ttk.Notebook(self.root)
@@ -20,14 +26,17 @@ class DeviceInspectionApp:
         
         self.device_frame = ttk.Frame(self.notebook)
         self.config_frame = ttk.Frame(self.notebook)
+        self.import_frame = ttk.Frame(self.notebook)
         self.log_frame = ttk.Frame(self.notebook)
         
         self.notebook.add(self.device_frame, text="设备管理")
         self.notebook.add(self.config_frame, text="系统配置")
+        self.notebook.add(self.import_frame, text="数据导入")
         self.notebook.add(self.log_frame, text="历史日志")
         
         self.setup_device_tab()
         self.setup_config_tab()
+        self.setup_import_tab()
         self.setup_log_tab()
         
     def setup_device_tab(self):
@@ -108,6 +117,265 @@ class DeviceInspectionApp:
         
         ttk.Button(self.config_frame, text="保存配置", command=self.save_config).grid(row=3, column=0, padx=10, pady=20)
         ttk.Button(self.config_frame, text="导出记录", command=self.export_records).grid(row=3, column=1, padx=10, pady=20)
+        
+    def setup_import_tab(self):
+        user_frame = ttk.LabelFrame(self.import_frame, text="当前用户")
+        user_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(user_frame, text="操作人:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        self.user_entry = ttk.Entry(user_frame, width=20)
+        self.user_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+        
+        ttk.Button(user_frame, text="验证身份", command=self.verify_user).grid(row=0, column=2, padx=5, pady=5)
+        
+        self.user_status_label = ttk.Label(user_frame, text="未验证", foreground="gray")
+        self.user_status_label.grid(row=0, column=3, padx=10, pady=5, sticky=tk.W)
+        
+        file_frame = ttk.LabelFrame(self.import_frame, text="选择导入文件")
+        file_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(file_frame, text="文件路径:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        self.import_file_entry = ttk.Entry(file_frame, width=60)
+        self.import_file_entry.grid(row=0, column=1, padx=5, pady=5)
+        ttk.Button(file_frame, text="浏览", command=self.browse_import_file).grid(row=0, column=2, padx=5, pady=5)
+        
+        btn_frame = ttk.Frame(file_frame)
+        btn_frame.grid(row=1, column=0, columnspan=3, padx=5, pady=5)
+        
+        ttk.Button(btn_frame, text="预检导入", command=self.preview_import).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="执行导入", command=self.execute_import).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="撤销上次导入", command=self.rollback_import).pack(side=tk.LEFT, padx=5)
+        
+        self.rollback_info_label = ttk.Label(file_frame, text="", foreground="blue")
+        self.rollback_info_label.grid(row=2, column=0, columnspan=3, padx=5, pady=5, sticky=tk.W)
+        
+        preview_frame = ttk.LabelFrame(self.import_frame, text="预检结果")
+        preview_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.preview_notebook = ttk.Notebook(preview_frame)
+        self.preview_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        self.new_rows_frame = ttk.Frame(self.preview_notebook)
+        self.overwrite_rows_frame = ttk.Frame(self.preview_notebook)
+        self.conflict_rows_frame = ttk.Frame(self.preview_notebook)
+        self.invalid_rows_frame = ttk.Frame(self.preview_notebook)
+        
+        self.preview_notebook.add(self.new_rows_frame, text="新增 (0)")
+        self.preview_notebook.add(self.overwrite_rows_frame, text="覆盖 (0)")
+        self.preview_notebook.add(self.conflict_rows_frame, text="冲突 (0)")
+        self.preview_notebook.add(self.invalid_rows_frame, text="无效 (0)")
+        
+        self.new_tree = ttk.Treeview(self.new_rows_frame, columns=("类型", "ID", "详情"), show="headings")
+        self.new_tree.heading("类型", text="类型")
+        self.new_tree.heading("ID", text="ID")
+        self.new_tree.heading("详情", text="详情")
+        self.new_tree.column("类型", width=80)
+        self.new_tree.column("ID", width=120)
+        self.new_tree.column("详情", width=400)
+        self.new_tree.pack(fill=tk.BOTH, expand=True)
+        
+        self.overwrite_tree = ttk.Treeview(self.overwrite_rows_frame, columns=("类型", "ID", "详情"), show="headings")
+        self.overwrite_tree.heading("类型", text="类型")
+        self.overwrite_tree.heading("ID", text="ID")
+        self.overwrite_tree.heading("详情", text="详情")
+        self.overwrite_tree.column("类型", width=80)
+        self.overwrite_tree.column("ID", width=120)
+        self.overwrite_tree.column("详情", width=400)
+        self.overwrite_tree.pack(fill=tk.BOTH, expand=True)
+        
+        self.conflict_tree = ttk.Treeview(self.conflict_rows_frame, columns=("类型", "ID", "原因"), show="headings")
+        self.conflict_tree.heading("类型", text="类型")
+        self.conflict_tree.heading("ID", text="ID")
+        self.conflict_tree.heading("原因", text="原因")
+        self.conflict_tree.column("类型", width=80)
+        self.conflict_tree.column("ID", width=120)
+        self.conflict_tree.column("原因", width=400)
+        self.conflict_tree.pack(fill=tk.BOTH, expand=True)
+        
+        self.invalid_tree = ttk.Treeview(self.invalid_rows_frame, columns=("类型", "ID", "错误"), show="headings")
+        self.invalid_tree.heading("类型", text="类型")
+        self.invalid_tree.heading("ID", text="ID")
+        self.invalid_tree.heading("错误", text="错误信息")
+        self.invalid_tree.column("类型", width=80)
+        self.invalid_tree.column("ID", width=120)
+        self.invalid_tree.column("错误", width=400)
+        self.invalid_tree.pack(fill=tk.BOTH, expand=True)
+        
+        self.preview_info = None
+        self._update_rollback_info()
+        
+    def _check_rollback_on_startup(self):
+        rollback_info = self.import_service.get_rollback_info()
+        if rollback_info:
+            self.after_startup_check = True
+        
+    def _update_rollback_info(self):
+        rollback_info = self.import_service.get_rollback_info()
+        if rollback_info:
+            self.rollback_info_label.config(
+                text=f"可撤销: 导入 {rollback_info['import_log_id']} ({rollback_info['import_time']})"
+            )
+        else:
+            self.rollback_info_label.config(text="当前没有可撤销的导入记录")
+        
+    def verify_user(self):
+        user = self.user_entry.get().strip()
+        if not user:
+            messagebox.showwarning("提示", "请输入操作人姓名")
+            return
+        
+        self.current_user = user
+        self.is_supervisor = user in SUPERVISORS
+        
+        if self.is_supervisor:
+            self.user_status_label.config(text=f"已验证 - 主管 (可导入)", foreground="green")
+        else:
+            self.user_status_label.config(text=f"已验证 - 普通人员 (仅预览)", foreground="orange")
+        
+    def browse_import_file(self):
+        file_path = filedialog.askopenfilename(
+            filetypes=[("JSON文件", "*.json"), ("CSV文件", "*.csv"), ("所有文件", "*.*")]
+        )
+        if file_path:
+            self.import_file_entry.delete(0, tk.END)
+            self.import_file_entry.insert(0, file_path)
+        
+    def preview_import(self):
+        if not self.current_user:
+            messagebox.showwarning("提示", "请先验证身份")
+            return
+        
+        file_path = self.import_file_entry.get().strip()
+        if not file_path:
+            messagebox.showwarning("提示", "请选择导入文件")
+            return
+        
+        if not self.is_supervisor:
+            messagebox.showinfo("提示", "您是普通人员，只能预览导入结果，无法执行导入")
+        
+        preview_info, error = self.import_service.preview_import(file_path, self.current_user, self.is_supervisor)
+        
+        if error:
+            messagebox.showerror("预检失败", error)
+            return
+        
+        self.preview_info = preview_info
+        self.preview_info['file_path'] = file_path
+        preview = preview_info['preview']
+        
+        for tree in [self.new_tree, self.overwrite_tree, self.conflict_tree, self.invalid_tree]:
+            for item in tree.get_children():
+                tree.delete(item)
+        
+        for row in preview.new_rows:
+            row_type, row_id, detail = self._parse_preview_row(row)
+            self.new_tree.insert("", tk.END, values=(row_type, row_id, detail))
+        
+        for row in preview.overwrite_rows:
+            row_type, row_id, detail = self._parse_preview_row(row)
+            self.overwrite_tree.insert("", tk.END, values=(row_type, row_id, detail))
+        
+        for row in preview.conflict_rows:
+            row_type, row_id, _ = self._parse_preview_row(row)
+            self.conflict_tree.insert("", tk.END, values=(row_type, row_id, row.reason))
+        
+        for row in preview.invalid_rows:
+            row_type, row_id, _ = self._parse_preview_row(row)
+            self.invalid_tree.insert("", tk.END, values=(row_type, row_id, row.reason))
+        
+        self.preview_notebook.tab(self.new_rows_frame, text=f"新增 ({len(preview.new_rows)})")
+        self.preview_notebook.tab(self.overwrite_rows_frame, text=f"覆盖 ({len(preview.overwrite_rows)})")
+        self.preview_notebook.tab(self.conflict_rows_frame, text=f"冲突 ({len(preview.conflict_rows)})")
+        self.preview_notebook.tab(self.invalid_rows_frame, text=f"无效 ({len(preview.invalid_rows)})")
+        
+        summary = f"预检完成！\n文件类型: {preview_info['file_type']}\n"
+        summary += f"新增: {len(preview.new_rows)} 条\n"
+        summary += f"覆盖: {len(preview.overwrite_rows)} 条\n"
+        summary += f"冲突: {len(preview.conflict_rows)} 条\n"
+        summary += f"无效: {len(preview.invalid_rows)} 条\n"
+        
+        if preview.invalid_rows:
+            summary += "\n警告: 存在无效记录，请检查'无效'标签页"
+        
+        if not self.is_supervisor:
+            summary += "\n\n注意: 您是普通人员，只能预览，无法执行导入"
+        
+        messagebox.showinfo("预检结果", summary)
+        
+    def _parse_preview_row(self, row):
+        data = row.row_data
+        if 'name' in data and 'status' in data:
+            return "设备", data.get('device_id', ''), f"{data.get('name', '')} - {data.get('status', '')}"
+        elif 'repair_desc' in data:
+            return "维修", data.get('record_id', ''), f"{data.get('device_id', '')} - {data.get('repair_desc', '')[:30]}"
+        elif 'approval_type' in data:
+            return "审批", data.get('record_id', ''), f"{data.get('device_id', '')} - {data.get('approval_type', '')}"
+        else:
+            return "未知", '', str(data)
+        
+    def execute_import(self):
+        if not self.current_user:
+            messagebox.showwarning("提示", "请先验证身份")
+            return
+        
+        if not self.is_supervisor:
+            messagebox.showwarning("权限不足", "只有主管才能执行导入操作")
+            return
+        
+        if not self.preview_info:
+            messagebox.showwarning("提示", "请先执行预检")
+            return
+        
+        preview = self.preview_info['preview']
+        
+        if preview.invalid_rows:
+            if not messagebox.askyesno("警告", f"存在 {len(preview.invalid_rows)} 条无效记录，是否跳过这些记录继续导入？"):
+                return
+        
+        if not messagebox.askyesno("确认导入", "确定要执行导入吗？\n导入前会自动备份当前数据。"):
+            return
+        
+        success, msg = self.import_service.execute_import(self.preview_info, skip_conflicts=True)
+        
+        if success:
+            messagebox.showinfo("导入成功", msg)
+            self.refresh_device_list()
+            self.refresh_log()
+            self._update_rollback_info()
+            self.preview_info = None
+        else:
+            messagebox.showerror("导入失败", msg)
+        
+    def rollback_import(self):
+        if not self.current_user:
+            messagebox.showwarning("提示", "请先验证身份")
+            return
+        
+        if not self.is_supervisor:
+            messagebox.showwarning("权限不足", "只有主管才能执行撤销操作")
+            return
+        
+        rollback_info = self.import_service.get_rollback_info()
+        if not rollback_info:
+            messagebox.showinfo("提示", "没有可撤销的导入记录")
+            return
+        
+        if not messagebox.askyesno("确认撤销", f"确定要撤销导入 {rollback_info['import_log_id']} 吗？\n数据将恢复到 {rollback_info['import_time']}"):
+            return
+        
+        success, msg = self.import_service.rollback()
+        
+        if success:
+            self.service.devices = self.service.storage.load_devices()
+            self.service.repair_records = self.service.storage.load_repair_records()
+            self.service.approval_records = self.service.storage.load_approval_records()
+            
+            messagebox.showinfo("撤销成功", msg)
+            self.refresh_device_list()
+            self.refresh_log()
+            self._update_rollback_info()
+        else:
+            messagebox.showerror("撤销失败", msg)
         
     def setup_log_tab(self):
         self.log_tree = ttk.Treeview(self.log_frame, columns=("类型", "设备ID", "内容", "操作人", "时间"), show="headings")

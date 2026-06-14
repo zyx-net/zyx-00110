@@ -1,0 +1,15 @@
+{
+  "devices": [
+    {
+      "device_id": "RESTART001",
+      "name": "Restart Test Device",
+      "status": "正常",
+      "abnormal_desc": "",
+      "create_time": "2026-06-15T00:52:19.745581",
+      "update_time": "2026-06-15T00:52:19.745591"
+    }
+  ],
+  "repair_records": [],
+  "approval_records": [],
+  "export_time": "2026-06-15T00:52:19.746649"
+}

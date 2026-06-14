@@ -1,0 +1,40 @@
+{
+  "devices": [
+    {
+      "device_id": "CSVBASE001",
+      "name": "CSV Base Device",
+      "status": "已复机",
+      "abnormal_desc": "csv before import",
+      "create_time": "2026-06-15T00:56:46.003192",
+      "update_time": "2026-06-15T00:56:46.006332"
+    }
+  ],
+  "repair_records": [
+    {
+      "record_id": "REP_20260615005646",
+      "device_id": "CSVBASE001",
+      "repair_desc": "csv repair",
+      "operator": "Operator A",
+      "repair_time": "2026-06-15T00:56:46.005700"
+    }
+  ],
+  "approval_records": [
+    {
+      "record_id": "APR_20260615005646",
+      "device_id": "CSVBASE001",
+      "approval_type": "停机",
+      "opinion": "csv stop",
+      "approver": "系统",
+      "approve_time": "2026-06-15T00:56:46.004319"
+    },
+    {
+      "record_id": "APR_20260615005646",
+      "device_id": "CSVBASE001",
+      "approval_type": "复机",
+      "opinion": "csv restart",
+      "approver": "admin",
+      "approve_time": "2026-06-15T00:56:46.006326"
+    }
+  ],
+  "export_time": "2026-06-15T00:56:46.006940"
+}
