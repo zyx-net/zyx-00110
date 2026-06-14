@@ -134,6 +134,7 @@ python test_regression.py
 2. **无权限控制**：任何人都可以输入任意姓名批准复机
 3. **仅JSON导出**：只能导出JSON格式，没有CSV格式
 4. **配置可能丢失**：非法路径保存时可能冲掉原有配置
+5. **Windows编码错误**：`python test_regression.py` 在默认Windows终端会因Unicode符号触发 UnicodeEncodeError
 
 ### 修复后的变化
 
@@ -142,6 +143,7 @@ python test_regression.py
 3. ✅ **双格式导出**：同时生成JSON和CSV两个文件
 4. ✅ **配置保护**：非法路径保存失败时，原配置完整保留
 5. ✅ **主管列表可见**：复机审批时显示可审批的主管列表
+6. ✅ **终端兼容**：测试脚本使用ASCII字符输出，普通Windows终端无需设置 PYTHONIOENCODING 即可运行
 
 ## 项目结构
 

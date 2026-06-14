@@ -1,0 +1,40 @@
+{
+  "devices": [
+    {
+      "device_id": "TEST001",
+      "name": "Test Device A",
+      "status": "已复机",
+      "abnormal_desc": "Bearing noise",
+      "create_time": "2026-06-15T00:40:46.052392",
+      "update_time": "2026-06-15T00:40:46.055247"
+    }
+  ],
+  "repair_records": [
+    {
+      "record_id": "REP_20260615004046",
+      "device_id": "TEST001",
+      "repair_desc": "Replace bearing and lubricate",
+      "operator": "Zhang San",
+      "repair_time": "2026-06-15T00:40:46.054666"
+    }
+  ],
+  "approval_records": [
+    {
+      "record_id": "APR_20260615004046",
+      "device_id": "TEST001",
+      "approval_type": "停机",
+      "opinion": "Need inspection",
+      "approver": "系统",
+      "approve_time": "2026-06-15T00:40:46.053542"
+    },
+    {
+      "record_id": "APR_20260615004046",
+      "device_id": "TEST001",
+      "approval_type": "复机",
+      "opinion": "Repair qualified, approve restart",
+      "approver": "admin",
+      "approve_time": "2026-06-15T00:40:46.055241"
+    }
+  ],
+  "export_time": "2026-06-15T00:40:46.055853"
+}
