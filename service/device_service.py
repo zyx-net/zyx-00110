@@ -1,7 +1,11 @@
+import os
+import json
 from datetime import datetime
 from model.status import DeviceStatus
 from model.device import Device, RepairRecord, ApprovalRecord, Config
 from storage.json_storage import JSONStorage
+
+SUPERVISORS = {"李四", "王五", "赵六", "admin"}
 
 
 class DeviceService:
@@ -123,6 +127,9 @@ class DeviceService:
         if device.status != DeviceStatus.PENDING_RESTART_APPROVAL.value:
             return False, "设备当前状态不是待复机审批"
         
+        if approver not in SUPERVISORS:
+            return False, f"审批人'{approver}'不是主管，无权批准复机。主管包括：{', '.join(sorted(SUPERVISORS))}"
+        
         repair_count = sum(1 for r in self.repair_records if r.device_id == device_id)
         if repair_count == 0:
             return False, "没有维修记录，不能批准复机"
@@ -199,6 +206,9 @@ class DeviceService:
         if not os.path.isdir(export_dir):
             return False, "导出目录不存在"
         
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        exported_files = []
+        
         export_data = {
             "devices": [d.to_dict() for d in self.devices],
             "repair_records": [r.to_dict() for r in self.repair_records],
@@ -206,12 +216,37 @@ class DeviceService:
             "export_time": datetime.now().isoformat()
         }
         
-        filename = f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        filepath = os.path.join(export_dir, filename)
+        json_filename = f"export_{timestamp}.json"
+        json_filepath = os.path.join(export_dir, json_filename)
         
         try:
-            with open(filepath, "w", encoding="utf-8") as f:
+            with open(json_filepath, "w", encoding="utf-8") as f:
                 json.dump(export_data, f, indent=2, ensure_ascii=False)
-            return True, f"记录已导出到: {filepath}"
+            exported_files.append(json_filepath)
         except Exception as e:
-            return False, f"导出失败: {str(e)}"
+            return False, f"JSON导出失败: {str(e)}"
+        
+        csv_filename = f"export_{timestamp}.csv"
+        csv_filepath = os.path.join(export_dir, csv_filename)
+        
+        try:
+            with open(csv_filepath, "w", encoding="utf-8-sig", newline='') as f:
+                f.write("=== 设备状态 ===\n")
+                f.write("设备ID,设备名称,当前状态,异常描述,创建时间,更新时间\n")
+                for d in self.devices:
+                    f.write(f"{d.device_id},{d.name},{d.status},{d.abnormal_desc},{d.create_time},{d.update_time}\n")
+                
+                f.write("\n=== 维修记录 ===\n")
+                f.write("记录ID,设备ID,维修内容,维修人员,维修时间\n")
+                for r in self.repair_records:
+                    f.write(f"{r.record_id},{r.device_id},{r.repair_desc},{r.operator},{r.repair_time}\n")
+                
+                f.write("\n=== 审批记录 ===\n")
+                f.write("记录ID,设备ID,审批类型,审批意见,审批人,审批时间\n")
+                for a in self.approval_records:
+                    f.write(f"{a.record_id},{a.device_id},{a.approval_type},{a.opinion},{a.approver},{a.approve_time}\n")
+            exported_files.append(csv_filepath)
+        except Exception as e:
+            return False, f"CSV导出失败: {str(e)}"
+        
+        return True, f"记录已导出:\n1. {json_filepath}\n2. {csv_filepath}"

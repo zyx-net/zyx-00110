@@ -1,0 +1,40 @@
+{
+  "devices": [
+    {
+      "device_id": "TEST001",
+      "name": "测试设备A",
+      "status": "已复机",
+      "abnormal_desc": "轴承异响",
+      "create_time": "2026-06-15T00:29:45.400125",
+      "update_time": "2026-06-15T00:29:45.408976"
+    }
+  ],
+  "repair_records": [
+    {
+      "record_id": "REP_20260615002945",
+      "device_id": "TEST001",
+      "repair_desc": "更换轴承并润滑",
+      "operator": "张三",
+      "repair_time": "2026-06-15T00:29:45.405872"
+    }
+  ],
+  "approval_records": [
+    {
+      "record_id": "APR_20260615002945",
+      "device_id": "TEST001",
+      "approval_type": "停机",
+      "opinion": "需停机检修",
+      "approver": "系统",
+      "approve_time": "2026-06-15T00:29:45.402867"
+    },
+    {
+      "record_id": "APR_20260615002945",
+      "device_id": "TEST001",
+      "approval_type": "复机",
+      "opinion": "维修合格，同意复机",
+      "approver": "李四",
+      "approve_time": "2026-06-15T00:29:45.408966"
+    }
+  ],
+  "export_time": "2026-06-15T00:29:45.410414"
+}

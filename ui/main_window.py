@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
-from service.device_service import DeviceService
+from service.device_service import DeviceService, SUPERVISORS
 from model.status import DeviceStatus
 
 
@@ -277,12 +277,17 @@ class DeviceInspectionApp:
             messagebox.showwarning("提示", "没有维修记录，不能批准复机")
             return
         
-        opinion = simpledialog.askstring("批准复机", "请输入审批意见:")
-        if not opinion:
+        supervisor_list = ", ".join(sorted(SUPERVISORS))
+        approver = simpledialog.askstring("批准复机", f"请输入主管姓名（可审批人员：{supervisor_list}）:")
+        if not approver:
             return
         
-        approver = simpledialog.askstring("批准复机", "请输入审批人:")
-        if not approver:
+        if approver not in SUPERVISORS:
+            messagebox.showwarning("权限不足", f"'{approver}'不是主管，无权批准复机。\n可审批主管：{supervisor_list}")
+            return
+        
+        opinion = simpledialog.askstring("批准复机", "请输入审批意见:")
+        if not opinion:
             return
         
         success, msg = self.service.approve_restart(device_id, opinion, approver)
