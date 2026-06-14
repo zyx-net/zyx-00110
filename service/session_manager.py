@@ -284,6 +284,10 @@ class ImportSessionManager:
         if not session:
             return False, "会话不存在"
 
+        if not session.is_all_conflicts_resolved():
+            unresolved = session.get_unresolved_conflicts_count()
+            return False, f"还有 {unresolved} 个冲突项未决策，不能执行导入"
+
         current_checksum = self._calculate_file_checksum(session.file_path)
         if current_checksum != session.file_checksum:
             return False, "文件已被修改，不能执行导入。请重新预览文件"

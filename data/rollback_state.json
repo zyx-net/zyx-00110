@@ -1,6 +1,6 @@
 {
-  "backup_path": "data\\backups\\backup_20260615_031624_IMP_20260615031624",
-  "import_log_id": "IMP_20260615031624",
-  "import_time": "2026-06-15T03:16:24.772294",
-  "can_rollback": true
+  "backup_path": "",
+  "import_log_id": "",
+  "import_time": "",
+  "can_rollback": false
 }

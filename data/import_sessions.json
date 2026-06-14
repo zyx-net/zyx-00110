@@ -1,13 +1,13 @@
 [
   {
-    "session_id": "SESSION_20260615031624",
-    "file_path": "reviewer_conflict.json",
+    "session_id": "SESSION_20260615055113",
+    "file_path": "export_20260615_055113.json",
     "file_type": "json",
     "operator": "admin",
     "is_supervisor": true,
-    "created_time": "2026-06-15T03:16:24.766176",
-    "updated_time": "2026-06-15T03:16:24.766968",
-    "status": "completed",
+    "created_time": "2026-06-15T05:51:13.187822",
+    "updated_time": "2026-06-15T05:51:13.188516",
+    "status": "waiting_confirm",
     "preview_result": {
       "devices": {
         "new": [],
@@ -16,26 +16,14 @@
           {
             "row_type": "device",
             "row_data": {
-              "device_id": "REV001",
-              "name": "Reviewer Device 1 Imported",
-              "status": "已停机",
-              "abnormal_desc": "conflict one",
-              "create_time": "2026-06-15T00:00:00",
-              "update_time": "2026-06-15T00:00:00"
+              "device_id": "R002",
+              "name": "Tamper Device",
+              "status": "正常",
+              "abnormal_desc": "",
+              "create_time": "2026-06-15T05:51:13.185183",
+              "update_time": "2026-06-15T05:51:13.185188"
             },
-            "reason": "设备编号已存在本地记录: REV001"
-          },
-          {
-            "row_type": "device",
-            "row_data": {
-              "device_id": "REV002",
-              "name": "Reviewer Device 2 Imported",
-              "status": "已停机",
-              "abnormal_desc": "conflict two",
-              "create_time": "2026-06-15T00:00:00",
-              "update_time": "2026-06-15T00:00:00"
-            },
-            "reason": "设备编号已存在本地记录: REV002"
+            "reason": "设备编号已存在本地记录: R002"
           }
         ],
         "invalid": []
@@ -56,20 +44,12 @@
     "raw_data": {
       "devices": [
         {
-          "device_id": "REV001",
-          "name": "Reviewer Device 1 Imported",
-          "status": "已停机",
-          "abnormal_desc": "conflict one",
-          "create_time": "2026-06-15T00:00:00",
-          "update_time": "2026-06-15T00:00:00"
-        },
-        {
-          "device_id": "REV002",
-          "name": "Reviewer Device 2 Imported",
-          "status": "已停机",
-          "abnormal_desc": "conflict two",
-          "create_time": "2026-06-15T00:00:00",
-          "update_time": "2026-06-15T00:00:00"
+          "device_id": "R002",
+          "name": "Tamper Device",
+          "status": "正常",
+          "abnormal_desc": "",
+          "create_time": "2026-06-15T05:51:13.185183",
+          "update_time": "2026-06-15T05:51:13.185188"
         }
       ],
       "repair_records": [],
@@ -77,26 +57,26 @@
     },
     "conflict_resolutions": [
       {
-        "record_id": "REV001",
-        "record_type": "device",
+        "record_id": "R002",
+        "record_type": "devices",
         "row_data": {
-          "device_id": "REV001",
-          "name": "Reviewer Device 1 Imported",
-          "status": "已停机",
-          "abnormal_desc": "conflict one",
-          "create_time": "2026-06-15T00:00:00",
-          "update_time": "2026-06-15T00:00:00"
+          "device_id": "R002",
+          "name": "Tamper Device",
+          "status": "正常",
+          "abnormal_desc": "",
+          "create_time": "2026-06-15T05:51:13.185183",
+          "update_time": "2026-06-15T05:51:13.185188"
         },
-        "decision": "keep_local",
-        "decision_time": "2026-06-15T03:16:24.766965"
+        "decision": "overwrite_local",
+        "decision_time": "2026-06-15T05:51:13.188513"
       }
     ],
-    "file_checksum": "e7f4d29cbd2c360ea52060ca652d33b2",
-    "backup_path": "data\\backups\\backup_20260615_031624_IMP_20260615031624",
-    "committed": true,
-    "commit_time": "2026-06-15T03:16:24.773072",
-    "commit_operator": "admin",
-    "result_message": "覆盖 1 条, 跳过 1 条",
-    "can_undo": true
+    "file_checksum": "ac491a939818c16003d4ba27957bfd77",
+    "backup_path": null,
+    "committed": false,
+    "commit_time": null,
+    "commit_operator": null,
+    "result_message": "",
+    "can_undo": false
   }
 ]

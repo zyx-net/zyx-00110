@@ -1,18 +1,10 @@
 [
   {
-    "device_id": "REV001",
-    "name": "Reviewer Device 1",
+    "device_id": "R002",
+    "name": "Tamper Device",
     "status": "正常",
     "abnormal_desc": "",
-    "create_time": "2026-06-15T03:16:24.764498",
-    "update_time": "2026-06-15T03:16:24.764517"
-  },
-  {
-    "device_id": "REV002",
-    "name": "Reviewer Device 2 Imported",
-    "status": "已停机",
-    "abnormal_desc": "conflict two",
-    "create_time": "2026-06-15T00:00:00",
-    "update_time": "2026-06-15T00:00:00"
+    "create_time": "2026-06-15T05:51:13.185183",
+    "update_time": "2026-06-15T05:51:13.185188"
   }
 ]

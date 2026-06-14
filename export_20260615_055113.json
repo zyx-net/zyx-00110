@@ -1,0 +1,23 @@
+{
+  "devices": [
+    {
+      "device_id": "R002",
+      "name": "Tamper Device",
+      "status": "正常",
+      "abnormal_desc": "",
+      "create_time": "2026-06-15T05:51:13.185183",
+      "update_time": "2026-06-15T05:51:13.185188"
+    },
+    {
+      "device_id": "R002X",
+      "name": "Tampered",
+      "status": "正常",
+      "abnormal_desc": "",
+      "create_time": "2026-01-01T00:00:00",
+      "update_time": "2026-01-01T00:00:00"
+    }
+  ],
+  "repair_records": [],
+  "approval_records": [],
+  "export_time": "2026-06-15T05:51:13.185758"
+}

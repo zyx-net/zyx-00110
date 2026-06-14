@@ -1,10 +1,49 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
+from datetime import datetime
 from service.device_service import DeviceService, SUPERVISORS
 from service.import_service import ImportService
 from service.session_manager import ImportSessionManager
 from model.status import DeviceStatus
 from model.device import ConflictDecision, ImportSession
+import json
+
+
+def show_log_detail(log, parent_window):
+    detail_window = tk.Toplevel(parent_window)
+    detail_window.title(f"日志详情 - {log.log_id}")
+    detail_window.geometry("700x500")
+    
+    text = tk.Text(detail_window, wrap=tk.WORD, width=80, height=25)
+    text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    
+    info_lines = [
+        f"日志ID: {log.log_id}",
+        f"会话ID: {log.session_id}",
+        f"操作人: {log.operator}",
+        f"主管权限: {'是' if log.is_supervisor else '否'}",
+        f"导入时间: {log.import_time}",
+        f"总记录数: {log.total_rows}",
+        f"新增记录: {log.new_rows}",
+        f"覆盖记录: {log.overwrite_rows}",
+        f"跳过记录: {log.skipped_rows}",
+        f"冲突解决数: {log.conflict_resolved}",
+        f"状态: {log.status}",
+        f"消息: {log.message}",
+        "",
+        "详细信息:"
+    ]
+    
+    for line in info_lines:
+        text.insert(tk.END, line + "\n")
+    
+    if log.details:
+        import json
+        text.insert(tk.END, json.dumps(log.details, indent=2, ensure_ascii=False))
+    
+    scrollbar = tk.Scrollbar(text, command=text.yview)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    text.config(yscrollcommand=scrollbar.set)
 
 
 class DeviceInspectionApp:
@@ -994,6 +1033,13 @@ class DeviceInspectionApp:
             messagebox.showerror("撤销失败", msg)
         
     def setup_log_tab(self):
+        log_btn_frame = ttk.Frame(self.log_frame)
+        log_btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        ttk.Button(log_btn_frame, text="刷新", command=self.refresh_log).pack(side=tk.LEFT, padx=5)
+        ttk.Button(log_btn_frame, text="导出会话日志", command=self.export_session_log).pack(side=tk.LEFT, padx=5)
+        ttk.Button(log_btn_frame, text="查看会话历史", command=self.view_session_history).pack(side=tk.LEFT, padx=5)
+        
         self.log_tree = ttk.Treeview(self.log_frame, columns=("类型", "设备ID", "内容", "操作人", "时间"), show="headings")
         self.log_tree.heading("类型", text="记录类型")
         self.log_tree.heading("设备ID", text="设备ID")
@@ -1052,14 +1098,98 @@ class DeviceInspectionApp:
                 record[3],
                 record[4].split("T")[0] + " " + record[4].split("T")[1][:8]
             ))
+    
+    def export_session_log(self):
+        logs = self.session_manager.get_session_logs()
+        if not logs:
+            messagebox.showinfo("提示", "没有会话日志可导出")
+            return
         
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON文件", "*.json"), ("所有文件", "*.*")],
+            initialfile=f"session_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            export_data = {
+                "export_time": datetime.now().isoformat(),
+                "total_logs": len(logs),
+                "logs": [log.to_dict() for log in logs]
+            }
+            
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(export_data, f, indent=2, ensure_ascii=False)
+            
+            messagebox.showinfo("导出成功", f"会话日志已导出到:\n{file_path}")
+        except Exception as e:
+            messagebox.showerror("导出失败", f"导出失败: {str(e)}")
+    
+    def view_session_history(self):
+        logs = self.session_manager.get_session_logs()
+        if not logs:
+            messagebox.showinfo("提示", "没有会话历史")
+            return
+        
+        history_window = tk.Toplevel(self.root)
+        history_window.title("会话历史")
+        history_window.geometry("1000x600")
+        
+        tree = ttk.Treeview(history_window, columns=("日志ID", "会话ID", "操作人", "状态", "时间", "消息"), show="headings")
+        tree.heading("日志ID", text="日志ID")
+        tree.heading("会话ID", text="会话ID")
+        tree.heading("操作人", text="操作人")
+        tree.heading("状态", text="状态")
+        tree.heading("时间", text="时间")
+        tree.heading("消息", text="消息")
+        
+        tree.column("日志ID", width=150)
+        tree.column("会话ID", width=150)
+        tree.column("操作人", width=80)
+        tree.column("状态", width=80)
+        tree.column("时间", width=150)
+        tree.column("消息", width=300)
+        
+        tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        status_map = {
+            "success": "成功",
+            "failed": "失败",
+            "undone": "已撤销",
+            "undo_failed": "撤销失败"
+        }
+        
+        for log in logs:
+            tree.insert("", tk.END, values=(
+                log.log_id,
+                log.session_id,
+                log.operator,
+                status_map.get(log.status, log.status),
+                log.import_time.split("T")[0] + " " + log.import_time.split("T")[1][:8],
+                log.message[:50] + "..." if len(log.message) > 50 else log.message
+            ))
+        
+        def on_double_click(event):
+            item = tree.selection()
+            if item:
+                log_id = tree.item(item[0])['values'][0]
+                for log in logs:
+                    if log.log_id == log_id:
+                        show_log_detail(log, history_window)
+                        break
+        
+        tree.bind("<Double-Button-1>", on_double_click)
+    
     def get_selected_device_id(self):
         selected = self.device_tree.selection()
         if not selected:
             messagebox.showwarning("提示", "请先选择一个设备")
             return None
         item = self.device_tree.item(selected[0])
-        return item["values"][0]]
+        return item["values"][0]
     
     def add_device(self):
         device_id = self.device_id_entry.get().strip()

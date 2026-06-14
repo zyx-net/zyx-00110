@@ -1948,3 +1948,410 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+
+def test_session_complete_flow():
+    print("\n" + "=" * 60)
+    print("Session Complete Flow Test: Create -> Resolve -> Commit -> Undo")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create test file with conflicts")
+    test_file = os.path.join(service.storage.data_dir, "test_conflicts.json")
+    test_data = {
+        "devices": [
+            {"device_id": "DEV001", "name": "Test Device 1", "status": "正常"},
+            {"device_id": "DEV002", "name": "Test Device 2", "status": "正常"}
+        ],
+        "repair_records": [
+            {"record_id": "REP001", "device_id": "DEV001", "repair_desc": "Fix issue", "operator": "Zhang San"}
+        ],
+        "approval_records": [
+            {"record_id": "APP001", "device_id": "DEV001", "approval_type": "停机", "opinion": "Approved", "approver": "admin"}
+        ]
+    }
+    
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    print(f"  {PASS} Test file created: {test_file}")
+    
+    print("\n[Step 2] Create session")
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "admin", True)
+    assert error is None, f"Preview failed: {error}"
+    
+    session, msg = session_manager.create_session(
+        file_path=test_file,
+        file_type='json',
+        operator="admin",
+        is_supervisor=True,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    assert session is not None, f"Failed to create session: {msg}"
+    print(f"  {PASS} Session created: {session.session_id}")
+    
+    print("\n[Step 3] Resolve conflicts")
+    if preview_result.get_total_conflict() > 0:
+        for category in ["devices", "repair_records", "approval_records"]:
+            for conflict_row in preview_result.__dict__[category]["conflict"]:
+                record_id = conflict_row.row_data.get('device_id') or conflict_row.row_data.get('record_id')
+                success, error = session_manager.resolve_conflict(
+                    session.session_id,
+                    record_id,
+                    category.replace("_records", "").replace("_", ""),
+                    conflict_row.row_data,
+                    ConflictDecision.OVERWRITE_LOCAL
+                )
+                assert success, f"Failed to resolve conflict: {error}"
+        print(f"  {PASS} All conflicts resolved")
+    
+    print("\n[Step 4] Verify session is ready for commit")
+    session = session_manager.get_session(session.session_id)
+    assert session.is_all_conflicts_resolved(), "Session should have all conflicts resolved"
+    print(f"  {PASS} Session ready for commit")
+    
+    print("\n[Step 5] Commit import")
+    success, msg = session_manager.commit_import(session, "admin", True)
+    assert success, f"Commit failed: {msg}"
+    print(f"  {PASS} Import committed successfully")
+    
+    print("\n[Step 6] Verify data imported")
+    device = service.find_device("DEV001")
+    assert device is not None, "Device not found after import"
+    print(f"  {PASS} Device imported: {device.name}")
+    
+    print("\n[Step 7] Verify undo is available")
+    session = session_manager.get_session(session.session_id)
+    assert session.can_undo, "Session should support undo"
+    assert session.backup_path is not None, "Session should have backup path"
+    print(f"  {PASS} Undo is available, backup: {session.backup_path}")
+    
+    print("\n[Step 8] Undo import")
+    success, msg = session_manager.undo_import(session)
+    assert success, f"Undo failed: {msg}"
+    print(f"  {PASS} Import undone successfully")
+    
+    print("\n[Step 9] Verify data restored")
+    device = service.find_device("DEV001")
+    assert device is None, "Device should be removed after undo"
+    print(f"  {PASS} Data restored to pre-import state")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Complete Flow Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_session_filter_and_batch():
+    print("\n" + "=" * 60)
+    print("Session Filter and Batch Decision Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create session with multiple conflict types")
+    test_file = os.path.join(service.storage.data_dir, "test_multi_conflicts.json")
+    test_data = {
+        "devices": [
+            {"device_id": "FILT001", "name": "Filter Device 1", "status": "正常"},
+            {"device_id": "FILT002", "name": "Filter Device 2", "status": "正常"}
+        ],
+        "repair_records": [
+            {"record_id": "FREP001", "device_id": "FILT001", "repair_desc": "Fix issue", "operator": "Zhang San"}
+        ],
+        "approval_records": [
+            {"record_id": "FAPP001", "device_id": "FILT001", "approval_type": "停机", "opinion": "Approved", "approver": "admin"}
+        ]
+    }
+    
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "admin", True)
+    session, msg = session_manager.create_session(
+        file_path=test_file,
+        file_type='json',
+        operator="admin",
+        is_supervisor=True,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    
+    print(f"  {PASS} Session created with {preview_result.get_total_conflict()} conflicts")
+    
+    print("\n[Step 2] Test filtering by type")
+    device_conflicts = session_manager.get_conflicts_by_type(session, "device")
+    print(f"  Device conflicts: {len(device_conflicts)}")
+    
+    repair_conflicts = session_manager.get_conflicts_by_type(session, "repair")
+    print(f"  Repair conflicts: {len(repair_conflicts)}")
+    
+    approval_conflicts = session_manager.get_conflicts_by_type(session, "approval")
+    print(f"  Approval conflicts: {len(approval_conflicts)}")
+    
+    all_conflicts = session_manager.get_conflicts_by_type(session, "all")
+    print(f"  Total conflicts: {len(all_conflicts)}")
+    
+    assert len(all_conflicts) == len(device_conflicts) + len(repair_conflicts) + len(approval_conflicts), \
+        "Total conflicts should equal sum of type-filtered conflicts"
+    print(f"  {PASS} Filter counts match")
+    
+    print("\n[Step 3] Test filtering by decision status")
+    unresolved = [c for c in all_conflicts if c['decision'] is None]
+    assert len(unresolved) == len(all_conflicts), "All conflicts should be unresolved initially"
+    print(f"  {PASS} All conflicts initially unresolved")
+    
+    print("\n[Step 4] Test batch decision")
+    if len(all_conflicts) > 0:
+        batch_resolutions = [
+            {
+                'record_id': c['record_id'],
+                'record_type': c['record_type'],
+                'row_data': c['row_data'],
+                'decision': ConflictDecision.SKIP
+            }
+            for c in all_conflicts
+        ]
+        
+        success, error_msg, count = session_manager.resolve_conflicts_batch(session.session_id, batch_resolutions)
+        assert success, f"Batch resolution failed: {error_msg}"
+        assert count == len(all_conflicts), f"Should resolve {len(all_conflicts)} conflicts, got {count}"
+        print(f"  {PASS} Batch resolution: {count} conflicts set to SKIP")
+    
+    print("\n[Step 5] Verify all conflicts resolved")
+    session = session_manager.get_session(session.session_id)
+    summary = session_manager.get_resolved_conflicts_summary(session)
+    assert summary['unresolved'] == 0, f"Should have 0 unresolved, got {summary['unresolved']}"
+    assert summary['resolved'] == summary['total'], "All conflicts should be resolved"
+    print(f"  {PASS} All conflicts resolved: {summary['resolved']}/{summary['total']}")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Filter and Batch Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_session_log_export():
+    print("\n" + "=" * 60)
+    print("Session Log Export Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Verify no logs initially")
+    logs = session_manager.get_session_logs()
+    initial_count = len(logs)
+    print(f"  Initial log count: {initial_count}")
+    
+    print("\n[Step 2] Export logs (should handle empty logs)")
+    export_file = os.path.join(service.storage.data_dir, "test_export.json")
+    try:
+        if logs:
+            result = session_manager.export_session_log(logs[0], export_file)
+            print(f"  {PASS} Export succeeded")
+        else:
+            print(f"  {PASS} No logs to export, handled gracefully")
+    except Exception as e:
+        print(f"  {FAIL} Export failed: {e}")
+        raise
+    
+    print("\n" + "=" * 60)
+    print(f"Session Log Export Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_session_restart_recovery():
+    print("\n" + "=" * 60)
+    print("Session Restart Recovery Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create session and make decisions")
+    test_file = os.path.join(service.storage.data_dir, "test_recovery.json")
+    test_data = {
+        "devices": [
+            {"device_id": "RECV001", "name": "Recovery Device", "status": "正常"}
+        ],
+        "repair_records": [],
+        "approval_records": []
+    }
+    
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "admin", True)
+    session, msg = session_manager.create_session(
+        file_path=test_file,
+        file_type='json',
+        operator="admin",
+        is_supervisor=True,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    
+    session_id = session.session_id
+    print(f"  Session created: {session_id}")
+    
+    print("\n[Step 2] Resolve all conflicts")
+    if preview_result.get_total_conflict() > 0:
+        for category in ["devices", "repair_records", "approval_records"]:
+            for conflict_row in preview_result.__dict__[category]["conflict"]:
+                record_id = conflict_row.row_data.get('device_id') or conflict_row.row_data.get('record_id')
+                session_manager.resolve_conflict(
+                    session_id, record_id, category.replace("_records", "").replace("_", ""),
+                    conflict_row.row_data, ConflictDecision.OVERWRITE_LOCAL
+                )
+    print(f"  {PASS} Conflicts resolved")
+    
+    print("\n[Step 3] Simulate restart - recreate session manager")
+    del session_manager
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 4] Check active session")
+    active_session = session_manager.check_active_session()
+    assert active_session is not None, "Active session should be found"
+    assert active_session.session_id == session_id, f"Session ID mismatch: {active_session.session_id} != {session_id}"
+    print(f"  {PASS} Session recovered: {active_session.session_id}")
+    
+    print("\n[Step 5] Verify session data integrity")
+    assert active_session.preview_result is not None, "Preview result should be preserved"
+    assert active_session.raw_data is not None, "Raw data should be preserved"
+    print(f"  {PASS} Session data integrity verified")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Restart Recovery Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_conflict_incomplete_submit_block():
+    print("\n" + "=" * 60)
+    print("Conflict Incomplete Submit Block Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create session with conflicts")
+    test_file = os.path.join(service.storage.data_dir, "test_incomplete.json")
+    test_data = {
+        "devices": [
+            {"device_id": "INCM001", "name": "Incomplete Device 1", "status": "正常"},
+            {"device_id": "INCM002", "name": "Incomplete Device 2", "status": "正常"}
+        ],
+        "repair_records": [],
+        "approval_records": []
+    }
+    
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "admin", True)
+    session, msg = session_manager.create_session(
+        file_path=test_file,
+        file_type='json',
+        operator="admin",
+        is_supervisor=True,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    
+    print(f"  {PASS} Session created with {preview_result.get_total_conflict()} conflicts")
+    
+    print("\n[Step 2] Try to commit without resolving conflicts - should fail")
+    success, msg = session_manager.commit_import(session, "admin", True)
+    assert not success, "Should fail without resolving conflicts"
+    assert "未决策" in msg or "conflict" in msg.lower(), f"Wrong error message: {msg}"
+    print(f"  {PASS} Blocked from committing: {msg}")
+    
+    print("\n[Step 3] Resolve only some conflicts - should still fail")
+    if preview_result.get_total_conflict() >= 2:
+        category = "devices"
+        conflicts = preview_result.__dict__[category]["conflict"]
+        if len(conflicts) >= 2:
+            record_id = conflicts[0].row_data.get('device_id')
+            session_manager.resolve_conflict(
+                session.session_id, record_id, "device",
+                conflicts[0].row_data, ConflictDecision.OVERWRITE_LOCAL
+            )
+            
+            success, msg = session_manager.commit_import(session, "admin", True)
+            assert not success, "Should fail with unresolved conflicts"
+            assert "未决策" in msg or "conflict" in msg.lower(), f"Wrong error message: {msg}"
+            print(f"  {PASS} Still blocked with partial resolution: {msg}")
+    
+    print("\n[Step 4] Resolve all conflicts - should succeed")
+    session = session_manager.get_session(session.session_id)
+    for category in ["devices", "repair_records", "approval_records"]:
+        for conflict_row in preview_result.__dict__[category]["conflict"]:
+            record_id = conflict_row.row_data.get('device_id') or conflict_row.row_data.get('record_id')
+            existing = session.get_conflict_resolution(record_id)
+            if existing is None:
+                session_manager.resolve_conflict(
+                    session.session_id, record_id, category.replace("_records", "").replace("_", ""),
+                    conflict_row.row_data, ConflictDecision.OVERWRITE_LOCAL
+                )
+    
+    success, msg = session_manager.commit_import(session, "admin", True)
+    assert success, f"Should succeed after resolving all conflicts: {msg}"
+    print(f"  {PASS} Commit succeeded after resolving all conflicts")
+    
+    print("\n" + "=" * 60)
+    print(f"Conflict Incomplete Submit Block Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    try:
+        test_nameerror_fix()
+        test_main_flow()
+        test_failure_cases()
+        test_json_import()
+        test_csv_import()
+        test_conflict_skip()
+        test_permission_block()
+        test_rollback_restore()
+        test_restart_persistence()
+        test_unauthorized_approval_import()
+        test_missing_fields_import()
+        test_csv_missing_fields_import()
+        test_validation_during_write()
+        test_session_create_and_persist()
+        test_session_conflict_resolution()
+        test_session_overwrite_local()
+        test_session_skip()
+        test_session_permission_block()
+        test_session_file_integrity_check()
+        test_session_undo_after_restart()
+        test_session_log_export()
+        test_session_conflict_unified()
+        test_session_batch_decision()
+        test_session_restart_recovery()
+        test_session_undo_after_import()
+        test_session_complete_flow()
+        test_session_filter_and_batch()
+        test_conflict_incomplete_submit_block()
+        print("\n" + "=" * 60)
+        print(f"All Tests Passed!")
+        print("=" * 60)
+    except AssertionError as e:
+        print(f"\n{FAIL} Test failed: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n{FAIL} Exception: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
