@@ -2,7 +2,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from service.device_service import DeviceService, SUPERVISORS
 from service.import_service import ImportService
+from service.session_manager import ImportSessionManager
 from model.status import DeviceStatus
+from model.device import ConflictDecision, ImportSession
 
 
 class DeviceInspectionApp:
@@ -10,33 +12,39 @@ class DeviceInspectionApp:
         self.root = root
         self.root.title("设备巡检停复机登记系统")
         self.root.geometry("1200x800")
-        
+
         self.service = DeviceService()
         self.import_service = ImportService(self.service.storage, self.service)
-        
+        self.session_manager = ImportSessionManager(self.service.storage, self.service)
+
         self.current_user = ""
         self.is_supervisor = False
-        
+        self.current_session = None
+
         self.setup_ui()
         self._check_rollback_on_startup()
+        self._check_pending_session()
         
     def setup_ui(self):
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
+
         self.device_frame = ttk.Frame(self.notebook)
         self.config_frame = ttk.Frame(self.notebook)
         self.import_frame = ttk.Frame(self.notebook)
+        self.session_frame = ttk.Frame(self.notebook)
         self.log_frame = ttk.Frame(self.notebook)
-        
+
         self.notebook.add(self.device_frame, text="设备管理")
         self.notebook.add(self.config_frame, text="系统配置")
         self.notebook.add(self.import_frame, text="数据导入")
+        self.notebook.add(self.session_frame, text="导入会话")
         self.notebook.add(self.log_frame, text="历史日志")
-        
+
         self.setup_device_tab()
         self.setup_config_tab()
         self.setup_import_tab()
+        self.setup_session_tab()
         self.setup_log_tab()
         
     def setup_device_tab(self):
@@ -203,11 +211,424 @@ class DeviceInspectionApp:
         
         self.preview_info = None
         self._update_rollback_info()
+
+    def setup_session_tab(self):
+        self.session_info_frame = ttk.LabelFrame(self.session_frame, text="会话信息")
+        self.session_info_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(self.session_info_frame, text="会话ID:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        self.session_id_label = ttk.Label(self.session_info_frame, text="无活动会话")
+        self.session_id_label.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+
+        ttk.Label(self.session_info_frame, text="文件:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
+        self.session_file_label = ttk.Label(self.session_info_frame, text="-")
+        self.session_file_label.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
+
+        ttk.Label(self.session_info_frame, text="状态:").grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
+        self.session_status_label = ttk.Label(self.session_info_frame, text="-")
+        self.session_status_label.grid(row=2, column=1, padx=5, pady=5, sticky=tk.W)
+
+        ttk.Label(self.session_info_frame, text="操作人:").grid(row=3, column=0, padx=5, pady=5, sticky=tk.W)
+        self.session_operator_label = ttk.Label(self.session_info_frame, text="-")
+        self.session_operator_label.grid(row=3, column=1, padx=5, pady=5, sticky=tk.W)
+
+        btn_frame = ttk.Frame(self.session_frame)
+        btn_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Button(btn_frame, text="创建新会话", command=self.create_new_session).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="刷新", command=self.refresh_session_view).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="提交导入", command=self.commit_session_import).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="撤销导入", command=self.undo_session_import).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="取消会话", command=self.cancel_current_session).pack(side=tk.LEFT, padx=5)
+
+        self.session_notebook = ttk.Notebook(self.session_frame)
+        self.session_notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        self.device_new_frame = ttk.Frame(self.session_notebook)
+        self.device_overwrite_frame = ttk.Frame(self.session_notebook)
+        self.device_conflict_frame = ttk.Frame(self.session_notebook)
+        self.device_invalid_frame = ttk.Frame(self.session_notebook)
+
+        self.session_notebook.add(self.device_new_frame, text="设备-新增 (0)")
+        self.session_notebook.add(self.device_overwrite_frame, text="设备-覆盖 (0)")
+        self.session_notebook.add(self.device_conflict_frame, text="设备-冲突 (0)")
+        self.session_notebook.add(self.device_invalid_frame, text="设备-无效 (0)")
+
+        self.repair_new_frame = ttk.Frame(self.session_notebook)
+        self.repair_overwrite_frame = ttk.Frame(self.session_notebook)
+        self.repair_conflict_frame = ttk.Frame(self.session_notebook)
+        self.repair_invalid_frame = ttk.Frame(self.session_notebook)
+
+        self.session_notebook.add(self.repair_new_frame, text="维修-新增 (0)")
+        self.session_notebook.add(self.repair_overwrite_frame, text="维修-覆盖 (0)")
+        self.session_notebook.add(self.repair_conflict_frame, text="维修-冲突 (0)")
+        self.session_notebook.add(self.repair_invalid_frame, text="维修-无效 (0)")
+
+        self.approval_new_frame = ttk.Frame(self.session_notebook)
+        self.approval_overwrite_frame = ttk.Frame(self.session_notebook)
+        self.approval_conflict_frame = ttk.Frame(self.session_notebook)
+        self.approval_invalid_frame = ttk.Frame(self.session_notebook)
+
+        self.session_notebook.add(self.approval_new_frame, text="审批-新增 (0)")
+        self.session_notebook.add(self.approval_overwrite_frame, text="审批-覆盖 (0)")
+        self.session_notebook.add(self.approval_conflict_frame, text="审批-冲突 (0)")
+        self.session_notebook.add(self.approval_invalid_frame, text="审批-无效 (0)")
+
+        self._setup_conflict_tree(self.device_conflict_frame, True)
+        self._setup_conflict_tree(self.repair_conflict_frame, True)
+        self._setup_conflict_tree(self.approval_conflict_frame, True)
+
+        self._setup_data_tree(self.device_new_frame)
+        self._setup_data_tree(self.device_overwrite_frame)
+        self._setup_data_tree(self.device_invalid_frame)
+        self._setup_data_tree(self.repair_new_frame)
+        self._setup_data_tree(self.repair_overwrite_frame)
+        self._setup_data_tree(self.repair_invalid_frame)
+        self._setup_data_tree(self.approval_new_frame)
+        self._setup_data_tree(self.approval_overwrite_frame)
+        self._setup_data_tree(self.approval_invalid_frame)
+
+    def _setup_data_tree(self, parent):
+        tree = ttk.Treeview(parent, columns=("ID", "详情"), show="headings")
+        tree.heading("ID", text="ID")
+        tree.heading("详情", text="详情")
+        tree.column("ID", width=150)
+        tree.column("详情", width=400)
+        tree.pack(fill=tk.BOTH, expand=True)
+
+    def _setup_conflict_tree(self, parent, with_buttons=False):
+        frame = ttk.Frame(parent)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        tree = ttk.Treeview(frame, columns=("类型", "ID", "原因", "决策"), show="headings")
+        tree.heading("类型", text="类型")
+        tree.heading("ID", text="ID")
+        tree.heading("原因", text="原因")
+        tree.heading("决策", text="当前决策")
+        tree.column("类型", width=80)
+        tree.column("ID", width=120)
+        tree.column("原因", width=250)
+        tree.column("决策", width=150)
+        tree.pack(fill=tk.BOTH, expand=True)
+
+        if with_buttons:
+            btn_frame = ttk.Frame(parent)
+            btn_frame.pack(fill=tk.X, pady=5)
+
+            ttk.Label(btn_frame, text="选中冲突项:").pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="保留本地", command=lambda: self._set_conflict_decision(tree, ConflictDecision.KEEP_LOCAL)).pack(side=tk.LEFT, padx=2)
+            ttk.Button(btn_frame, text="覆盖本地", command=lambda: self._set_conflict_decision(tree, ConflictDecision.OVERWRITE_LOCAL)).pack(side=tk.LEFT, padx=2)
+            ttk.Button(btn_frame, text="跳过", command=lambda: self._set_conflict_decision(tree, ConflictDecision.SKIP)).pack(side=tk.LEFT, padx=2)
+
+        parent.tree = tree
+
+    def _set_conflict_decision(self, tree, decision):
+        selected = tree.selection()
+        if not selected:
+            messagebox.showwarning("提示", "请先选择冲突项")
+            return
+
+        for item in selected:
+            values = tree.item(item)['values']
+            record_id = values[1]
+            record_type = values[0]
+            decision_text = {
+                ConflictDecision.KEEP_LOCAL: "保留本地",
+                ConflictDecision.OVERWRITE_LOCAL: "覆盖本地",
+                ConflictDecision.SKIP: "跳过"
+            }.get(decision, decision)
+
+            if self.current_session:
+                record_data = {}
+                if record_type == "设备":
+                    for row in self.current_session.preview_result.devices["conflict"]:
+                        if (row.row_data.get('device_id') or row.row_data.get('record_id')) == record_id:
+                            record_data = row.row_data
+                            break
+                elif record_type == "维修":
+                    for row in self.current_session.preview_result.repair_records["conflict"]:
+                        if (row.row_data.get('device_id') or row.row_data.get('record_id')) == record_id:
+                            record_data = row.row_data
+                            break
+                else:
+                    for row in self.current_session.preview_result.approval_records["conflict"]:
+                        if (row.row_data.get('device_id') or row.row_data.get('record_id')) == record_id:
+                            record_data = row.row_data
+                            break
+
+                success, error = self.session_manager.resolve_conflict(
+                    self.current_session.session_id,
+                    record_id,
+                    record_type,
+                    record_data,
+                    decision
+                )
+
+                if success:
+                    tree.item(item, values=(values[0], values[1], values[2], decision_text))
+                else:
+                    messagebox.showerror("错误", f"设置决策失败: {error}")
+
+    def _load_session_view(self, session):
+        self.current_session = session
+        self.session_id_label.config(text=session.session_id)
+        self.session_file_label.config(text=session.file_path or "-")
+        self.session_operator_label.config(text=session.operator or "-")
+
+        status_map = {
+            ImportSession.STATUS_PENDING: "待处理",
+            ImportSession.STATUS_IN_PROGRESS: "进行中",
+            ImportSession.STATUS_WAITING_CONFIRM: "待确认",
+            ImportSession.STATUS_COMPLETED: "已完成",
+            ImportSession.STATUS_CANCELLED: "已取消",
+            ImportSession.STATUS_FAILED: "失败"
+        }
+        self.session_status_label.config(text=status_map.get(session.status, session.status))
+
+        if session.preview_result:
+            self._populate_preview_results(session.preview_result)
+
+    def _populate_preview_results(self, preview):
+        trees_to_clear = [
+            (self.device_new_frame, 'tree'), (self.device_overwrite_frame, 'tree'),
+            (self.device_invalid_frame, 'tree'), (self.repair_new_frame, 'tree'),
+            (self.repair_overwrite_frame, 'tree'), (self.repair_invalid_frame, 'tree'),
+            (self.approval_new_frame, 'tree'), (self.approval_overwrite_frame, 'tree'),
+            (self.approval_invalid_frame, 'tree'),
+            (self.device_conflict_frame, 'tree'), (self.repair_conflict_frame, 'tree'),
+            (self.approval_conflict_frame, 'tree')
+        ]
+
+        for frame, attr in trees_to_clear:
+            if hasattr(frame, attr):
+                tree = getattr(frame, attr)
+                for item in tree.get_children():
+                    tree.delete(item)
+
+        self._add_rows_to_tree(self.device_new_frame, 'tree', preview.devices["new"])
+        self._add_rows_to_tree(self.device_overwrite_frame, 'tree', preview.devices["overwrite"])
+        self._add_conflict_rows_to_tree(self.device_conflict_frame, 'tree', preview.devices["conflict"], self.current_session)
+        self._add_rows_to_tree(self.device_invalid_frame, 'tree', preview.devices["invalid"])
+
+        self._add_rows_to_tree(self.repair_new_frame, 'tree', preview.repair_records["new"])
+        self._add_rows_to_tree(self.repair_overwrite_frame, 'tree', preview.repair_records["overwrite"])
+        self._add_conflict_rows_to_tree(self.repair_conflict_frame, 'tree', preview.repair_records["conflict"], self.current_session)
+        self._add_rows_to_tree(self.repair_invalid_frame, 'tree', preview.repair_records["invalid"])
+
+        self._add_rows_to_tree(self.approval_new_frame, 'tree', preview.approval_records["new"])
+        self._add_rows_to_tree(self.approval_overwrite_frame, 'tree', preview.approval_records["overwrite"])
+        self._add_conflict_rows_to_tree(self.approval_conflict_frame, 'tree', preview.approval_records["conflict"], self.current_session)
+        self._add_rows_to_tree(self.approval_invalid_frame, 'tree', preview.approval_records["invalid"])
+
+        self.session_notebook.tab(self.device_new_frame, text=f"设备-新增 ({len(preview.devices['new'])})")
+        self.session_notebook.tab(self.device_overwrite_frame, text=f"设备-覆盖 ({len(preview.devices['overwrite'])})")
+        self.session_notebook.tab(self.device_conflict_frame, text=f"设备-冲突 ({len(preview.devices['conflict'])})")
+        self.session_notebook.tab(self.device_invalid_frame, text=f"设备-无效 ({len(preview.devices['invalid'])})")
+
+        self.session_notebook.tab(self.repair_new_frame, text=f"维修-新增 ({len(preview.repair_records['new'])})")
+        self.session_notebook.tab(self.repair_overwrite_frame, text=f"维修-覆盖 ({len(preview.repair_records['overwrite'])})")
+        self.session_notebook.tab(self.repair_conflict_frame, text=f"维修-冲突 ({len(preview.repair_records['conflict'])})")
+        self.session_notebook.tab(self.repair_invalid_frame, text=f"维修-无效 ({len(preview.repair_records['invalid'])})")
+
+        self.session_notebook.tab(self.approval_new_frame, text=f"审批-新增 ({len(preview.approval_records['new'])})")
+        self.session_notebook.tab(self.approval_overwrite_frame, text=f"审批-覆盖 ({len(preview.approval_records['overwrite'])})")
+        self.session_notebook.tab(self.approval_conflict_frame, text=f"审批-冲突 ({len(preview.approval_records['conflict'])})")
+        self.session_notebook.tab(self.approval_invalid_frame, text=f"审批-无效 ({len(preview.approval_records['invalid'])})")
+
+    def _add_rows_to_tree(self, frame, attr, rows):
+        if hasattr(frame, attr):
+            tree = getattr(frame, attr)
+            for row in rows:
+                data = row.row_data
+                if 'name' in data:
+                    row_id = data.get('device_id', '')
+                    detail = f"{data.get('name', '')} - {data.get('status', '')}"
+                elif 'repair_desc' in data:
+                    row_id = data.get('record_id', '')
+                    detail = f"{data.get('device_id', '')} - {data.get('repair_desc', '')[:30]}"
+                elif 'approval_type' in data:
+                    row_id = data.get('record_id', '')
+                    detail = f"{data.get('device_id', '')} - {data.get('approval_type', '')}"
+                else:
+                    row_id = data.get('device_id') or data.get('record_id', '')
+                    detail = str(data)
+                tree.insert("", tk.END, values=(row_id, detail))
+
+    def _add_conflict_rows_to_tree(self, frame, attr, rows, session):
+        if hasattr(frame, attr):
+            tree = getattr(frame, attr)
+            for row in rows:
+                data = row.row_data
+                if 'name' in data:
+                    row_type = "设备"
+                    row_id = data.get('device_id', '')
+                elif 'repair_desc' in data:
+                    row_type = "维修"
+                    row_id = data.get('record_id', '')
+                else:
+                    row_type = "审批"
+                    row_id = data.get('record_id', '')
+
+                decision = session.get_conflict_resolution(row_id) if session else None
+                decision_text = {
+                    ConflictDecision.KEEP_LOCAL: "保留本地",
+                    ConflictDecision.OVERWRITE_LOCAL: "覆盖本地",
+                    ConflictDecision.SKIP: "跳过"
+                }.get(decision, "未决策")
+                tree.insert("", tk.END, values=(row_type, row_id, row.reason, decision_text))
+
+    def create_new_session(self):
+        if not self.current_user:
+            messagebox.showwarning("提示", "请先验证身份")
+            return
+
+        file_path = filedialog.askopenfilename(
+            filetypes=[("JSON文件", "*.json"), ("CSV文件", "*.csv"), ("所有文件", "*.*")]
+        )
+        if not file_path:
+            return
+
+        preview_result, raw_data, error = self.import_service.preview_import_session(
+            file_path, self.current_user, self.is_supervisor
+        )
+
+        if error:
+            messagebox.showerror("预览失败", error)
+            return
+
+        session, msg = self.session_manager.create_session(
+            file_path=file_path,
+            file_type=preview_result and 'json' or 'csv',
+            operator=self.current_user,
+            is_supervisor=self.is_supervisor,
+            parsed_data=raw_data,
+            preview_result=preview_result
+        )
+
+        if msg and "已恢复" in msg:
+            messagebox.showinfo("会话恢复", msg)
+
+        self.current_session = session
+        self._load_session_view(session)
+
+    def refresh_session_view(self):
+        if self.current_session:
+            session = self.session_manager.get_session(self.current_session.session_id)
+            if session:
+                self.current_session = session
+                self._load_session_view(session)
+            else:
+                messagebox.showinfo("提示", "会话已不存在")
+                self.current_session = None
+                self.session_id_label.config(text="无活动会话")
+                self.session_file_label.config(text="-")
+                self.session_status_label.config(text="-")
+                self.session_operator_label.config(text="-")
+
+    def commit_session_import(self):
+        if not self.current_session:
+            messagebox.showwarning("提示", "没有活动会话")
+            return
+
+        if not self.is_supervisor:
+            messagebox.showwarning("权限不足", "只有主管才能执行导入操作")
+            return
+
+        if not self.current_session.is_all_conflicts_resolved():
+            unresolved = self.current_session.get_unresolved_conflicts_count()
+            messagebox.showwarning("提示", f"还有 {unresolved} 个冲突项未决策，请先处理")
+            return
+
+        if not messagebox.askyesno("确认导入", "确定要执行导入吗？\n导入前会自动备份当前数据。\n导入后可撤销一次。"):
+            return
+
+        success, msg = self.session_manager.commit_import(
+            self.current_session,
+            self.current_user,
+            self.is_supervisor
+        )
+
+        if success:
+            messagebox.showinfo("导入成功", msg)
+            self.refresh_device_list()
+            self.refresh_log()
+            self.current_session = None
+            self.session_id_label.config(text="无活动会话")
+            self.session_file_label.config(text="-")
+            self.session_status_label.config(text="-")
+            self.session_operator_label.config(text="-")
+        else:
+            messagebox.showerror("导入失败", msg)
+
+    def undo_session_import(self):
+        if not self.current_session:
+            messagebox.showwarning("提示", "没有活动会话")
+            return
+
+        if not self.current_session.can_undo:
+            messagebox.showwarning("提示", "此会话不支持撤销")
+            return
+
+        if not messagebox.askyesno("确认撤销", "确定要撤销导入吗？\n数据将恢复到导入前的状态。"):
+            return
+
+        success, msg = self.session_manager.undo_import(self.current_session)
+
+        if success:
+            messagebox.showinfo("撤销成功", msg)
+            self.service.devices = self.service.storage.load_devices()
+            self.service.repair_records = self.service.storage.load_repair_records()
+            self.service.approval_records = self.service.storage.load_approval_records()
+            self.refresh_device_list()
+            self.refresh_log()
+        else:
+            messagebox.showerror("撤销失败", msg)
+
+    def cancel_current_session(self):
+        if not self.current_session:
+            messagebox.showwarning("提示", "没有活动会话")
+            return
+
+        if self.current_session.committed:
+            messagebox.showwarning("提示", "已提交的会话不能取消")
+            return
+
+        if not messagebox.askyesno("确认取消", "确定要取消此会话吗？"):
+            return
+
+        success, msg = self.session_manager.cancel_session(self.current_session.session_id)
+        if success:
+            messagebox.showinfo("提示", "会话已取消")
+            self.current_session = None
+            self.session_id_label.config(text="无活动会话")
+            self.session_file_label.config(text="-")
+            self.session_status_label.config(text="-")
+            self.session_operator_label.config(text="-")
+        else:
+            messagebox.showerror("错误", msg)
         
     def _check_rollback_on_startup(self):
         rollback_info = self.import_service.get_rollback_info()
         if rollback_info:
             self.after_startup_check = True
+
+    def _check_pending_session(self):
+        session = self.session_manager.check_active_session()
+        if session:
+            resume = messagebox.askyesno(
+                "发现未完成的会话",
+                f"发现未完成的导入会话:\n"
+                f"会话ID: {session.session_id}\n"
+                f"文件: {session.file_path}\n"
+                f"操作人: {session.operator}\n\n"
+                f"是否继续此会话？"
+            )
+            if resume:
+                self.current_session = session
+                self.notebook.select(self.session_frame)
+                self._load_session_view(session)
+            else:
+                self.session_manager.cancel_session(session.session_id)
         
     def _update_rollback_info(self):
         rollback_info = self.import_service.get_rollback_info()

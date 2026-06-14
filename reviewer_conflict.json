@@ -1,0 +1,11 @@
+{
+  "devices": [
+    {
+      "device_id": "REV001",
+      "name": "Reviewer Device",
+      "status": "已停机"
+    }
+  ],
+  "repair_records": [],
+  "approval_records": []
+}

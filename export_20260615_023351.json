@@ -1,0 +1,15 @@
+{
+  "devices": [
+    {
+      "device_id": "LOG001",
+      "name": "Log Test Device",
+      "status": "正常",
+      "abnormal_desc": "",
+      "create_time": "2026-06-15T02:33:51.475913",
+      "update_time": "2026-06-15T02:33:51.475918"
+    }
+  ],
+  "repair_records": [],
+  "approval_records": [],
+  "export_time": "2026-06-15T02:33:51.476562"
+}

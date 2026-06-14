@@ -3,6 +3,7 @@ import json
 import csv
 from datetime import datetime
 from model.device import Device, RepairRecord, ApprovalRecord, ImportLog, PreviewResult
+from model.device import SessionPreviewResult
 from model.status import DeviceStatus
 from storage.json_storage import JSONStorage
 from service.backup_service import BackupService
@@ -318,34 +319,34 @@ class ImportService:
         file_type, error = self.detect_file_type(file_path)
         if error:
             return None, error
-        
+
         if file_type == 'json':
             data, parse_error = self.parse_json_file(file_path)
         else:
             data, parse_error = self.parse_csv_file(file_path)
-        
+
         if data is None:
             return None, parse_error
-        
+
         preview_result = PreviewResult()
-        
+
         current_devices = self._get_current_devices()
         current_device_ids = {d.device_id for d in current_devices}
-        
+
         current_repair_records = self._get_current_repair_records()
         current_repair_ids = {r.record_id for r in current_repair_records}
-        
+
         current_approval_records = self._get_current_approval_records()
         current_approval_ids = {a.record_id for a in current_approval_records}
-        
+
         imported_device_ids = set()
-        
+
         if parse_error:
             preview_result.add_invalid({'_parse_error': parse_error}, f"解析警告: {parse_error}")
-        
+
         for device in data['devices']:
             validation_errors = self.validate_device(device, current_devices, current_repair_records)
-            
+
             if validation_errors:
                 preview_result.add_invalid(device.to_dict(), "; ".join(validation_errors))
             elif device.device_id in current_device_ids:
@@ -355,27 +356,27 @@ class ImportService:
             else:
                 preview_result.add_new(device.to_dict())
                 imported_device_ids.add(device.device_id)
-        
+
         for record in data['repair_records']:
             validation_errors = self.validate_repair_record(record, data['devices'])
-            
+
             if validation_errors:
                 preview_result.add_invalid(record.to_dict(), "; ".join(validation_errors))
             elif record.record_id in current_repair_ids:
                 preview_result.add_overwrite(record.to_dict())
             else:
                 preview_result.add_new(record.to_dict())
-        
+
         for record in data['approval_records']:
             validation_errors = self.validate_approval_record(record, data['devices'])
-            
+
             if validation_errors:
                 preview_result.add_invalid(record.to_dict(), "; ".join(validation_errors))
             elif record.record_id in current_approval_ids:
                 preview_result.add_overwrite(record.to_dict())
             else:
                 preview_result.add_new(record.to_dict())
-        
+
         return {
             'preview': preview_result,
             'file_type': file_type,
@@ -384,6 +385,79 @@ class ImportService:
             'data': data,
             'parse_error': parse_error
         }, None
+
+    def preview_import_session(self, file_path, operator, is_supervisor):
+        file_type, error = self.detect_file_type(file_path)
+        if error:
+            return None, None, error
+
+        if file_type == 'json':
+            data, parse_error = self.parse_json_file(file_path)
+        else:
+            data, parse_error = self.parse_csv_file(file_path)
+
+        if data is None:
+            return None, None, parse_error
+
+        preview_result = SessionPreviewResult()
+
+        current_devices = self._get_current_devices()
+        current_device_ids = {d.device_id for d in current_devices}
+        current_device_map = {d.device_id: d for d in current_devices}
+
+        current_repair_records = self._get_current_repair_records()
+        current_repair_ids = {r.record_id for r in current_repair_records}
+        current_repair_map = {r.record_id: r for r in current_repair_records}
+
+        current_approval_records = self._get_current_approval_records()
+        current_approval_ids = {a.record_id for a in current_approval_records}
+        current_approval_map = {a.record_id: a for a in current_approval_records}
+
+        imported_device_ids = set()
+
+        if parse_error:
+            preview_result.add_device_invalid({'_parse_error': parse_error}, f"解析警告: {parse_error}")
+
+        for device in data['devices']:
+            validation_errors = self.validate_device(device, current_devices, current_repair_records)
+
+            if validation_errors:
+                preview_result.add_device_invalid(device.to_dict(), "; ".join(validation_errors))
+            elif device.device_id in current_device_ids:
+                preview_result.add_device_overwrite(device.to_dict())
+            elif device.device_id in imported_device_ids:
+                preview_result.add_device_conflict(device.to_dict(), f"设备编号重复: {device.device_id}")
+            else:
+                preview_result.add_device_new(device.to_dict())
+                imported_device_ids.add(device.device_id)
+
+        for record in data['repair_records']:
+            validation_errors = self.validate_repair_record(record, data['devices'])
+
+            if validation_errors:
+                preview_result.add_repair_invalid(record.to_dict(), "; ".join(validation_errors))
+            elif record.record_id in current_repair_ids:
+                preview_result.add_repair_overwrite(record.to_dict())
+            else:
+                preview_result.add_repair_new(record.to_dict())
+
+        for record in data['approval_records']:
+            validation_errors = self.validate_approval_record(record, data['devices'])
+
+            if validation_errors:
+                preview_result.add_approval_invalid(record.to_dict(), "; ".join(validation_errors))
+            elif record.record_id in current_approval_ids:
+                preview_result.add_approval_overwrite(record.to_dict())
+            else:
+                preview_result.add_approval_new(record.to_dict())
+
+        raw_data = {
+            'devices': [d.to_dict() for d in data['devices']],
+            'repair_records': [r.to_dict() for r in data['repair_records']],
+            'approval_records': [a.to_dict() for a in data['approval_records']]
+        }
+
+        return preview_result, raw_data, None
 
     def execute_import(self, preview_info, skip_conflicts=True):
         if not preview_info['is_supervisor']:

@@ -1,0 +1,32 @@
+{
+  "log_id": "IMP_20260615023351",
+  "session_id": "SESSION_20260615023351",
+  "import_time": "2026-06-15T02:33:51.483420",
+  "operator": "admin",
+  "is_supervisor": true,
+  "total_rows": 1,
+  "new_rows": 0,
+  "overwrite_rows": 1,
+  "skipped_rows": 0,
+  "conflict_resolved": 0,
+  "status": "success",
+  "message": "覆盖 1 条",
+  "details": {
+    "devices": {
+      "new_devices": 0,
+      "overwrite_devices": 1,
+      "skipped_devices": 0
+    },
+    "repairs": {
+      "new_repairs": 0,
+      "overwrite_repairs": 0,
+      "skipped_repairs": 0
+    },
+    "approvals": {
+      "new_approvals": 0,
+      "overwrite_approvals": 0,
+      "skipped_approvals": 0
+    },
+    "conflict_decisions": []
+  }
+}

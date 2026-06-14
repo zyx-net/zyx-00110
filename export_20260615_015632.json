@@ -1,0 +1,40 @@
+{
+  "devices": [
+    {
+      "device_id": "IMP001",
+      "name": "Import Test Device 1",
+      "status": "待复机审批",
+      "abnormal_desc": "Test abnormal",
+      "create_time": "2026-06-15T01:56:32.982449",
+      "update_time": "2026-06-15T01:56:32.985081"
+    },
+    {
+      "device_id": "IMP002",
+      "name": "Import Test Device 2",
+      "status": "正常",
+      "abnormal_desc": "",
+      "create_time": "2026-06-15T01:56:32.982991",
+      "update_time": "2026-06-15T01:56:32.982996"
+    }
+  ],
+  "repair_records": [
+    {
+      "record_id": "REP_20260615015632",
+      "device_id": "IMP001",
+      "repair_desc": "Fixed the issue",
+      "operator": "Zhang San",
+      "repair_time": "2026-06-15T01:56:32.985076"
+    }
+  ],
+  "approval_records": [
+    {
+      "record_id": "APR_20260615015632",
+      "device_id": "IMP001",
+      "approval_type": "停机",
+      "opinion": "Need repair",
+      "approver": "系统",
+      "approve_time": "2026-06-15T01:56:32.984038"
+    }
+  ],
+  "export_time": "2026-06-15T01:56:32.985673"
+}

@@ -1,0 +1,32 @@
+{
+  "devices": [
+    {
+      "device_id": "UNAUTH001",
+      "name": "Unauthorized Test Device",
+      "status": "待复机审批",
+      "abnormal_desc": "Test",
+      "create_time": "2026-06-15T01:55:51.979952",
+      "update_time": "2026-06-15T01:55:51.982094"
+    }
+  ],
+  "repair_records": [
+    {
+      "record_id": "REP_20260615015551",
+      "device_id": "UNAUTH001",
+      "repair_desc": "Fixed",
+      "operator": "Zhang San",
+      "repair_time": "2026-06-15T01:55:51.982088"
+    }
+  ],
+  "approval_records": [
+    {
+      "record_id": "APR_20260615015551",
+      "device_id": "UNAUTH001",
+      "approval_type": "停机",
+      "opinion": "Test",
+      "approver": "系统",
+      "approve_time": "2026-06-15T01:55:51.981002"
+    }
+  ],
+  "export_time": "2026-06-15T01:55:51.982679"
+}

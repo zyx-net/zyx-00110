@@ -1,6 +1,7 @@
 import json
 import os
 from model.device import Device, RepairRecord, ApprovalRecord, Config, ImportLog, RollbackState
+from model.device import ImportSession, SessionImportLog
 
 
 class JSONStorage:
@@ -114,3 +115,89 @@ class JSONStorage:
     def save_rollback_state(self, state):
         with open(self.rollback_state_file, "w", encoding="utf-8") as f:
             json.dump(state.to_dict(), f, indent=2, ensure_ascii=False)
+
+    def _get_sessions_file(self):
+        return os.path.join(self.data_dir, "import_sessions.json")
+
+    def _get_session_logs_file(self):
+        return os.path.join(self.data_dir, "session_import_logs.json")
+
+    def load_active_session(self):
+        try:
+            with open(self._get_sessions_file(), "r", encoding="utf-8") as f:
+                sessions = json.load(f)
+                for session_data in sessions:
+                    if session_data.get("status") in [ImportSession.STATUS_PENDING, 
+                                                       ImportSession.STATUS_IN_PROGRESS,
+                                                       ImportSession.STATUS_WAITING_CONFIRM]:
+                        return ImportSession.from_dict(session_data)
+            return None
+        except Exception:
+            return None
+
+    def save_session(self, session):
+        try:
+            sessions = []
+            if os.path.exists(self._get_sessions_file()):
+                with open(self._get_sessions_file(), "r", encoding="utf-8") as f:
+                    sessions = json.load(f)
+            
+            sessions = [s for s in sessions if s.get("session_id") != session.session_id]
+            sessions.append(session.to_dict())
+            
+            with open(self._get_sessions_file(), "w", encoding="utf-8") as f:
+                json.dump(sessions, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception as e:
+            return False
+
+    def get_session(self, session_id):
+        try:
+            with open(self._get_sessions_file(), "r", encoding="utf-8") as f:
+                sessions = json.load(f)
+                for session_data in sessions:
+                    if session_data.get("session_id") == session_id:
+                        return ImportSession.from_dict(session_data)
+            return None
+        except Exception:
+            return None
+
+    def delete_session(self, session_id):
+        try:
+            with open(self._get_sessions_file(), "r", encoding="utf-8") as f:
+                sessions = json.load(f)
+            
+            sessions = [s for s in sessions if s.get("session_id") != session_id]
+            
+            with open(self._get_sessions_file(), "w", encoding="utf-8") as f:
+                json.dump(sessions, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception:
+            return False
+
+    def load_session_import_logs(self):
+        try:
+            with open(self._get_session_logs_file(), "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return [SessionImportLog.from_dict(item) for item in data]
+        except Exception:
+            return []
+
+    def save_session_import_log(self, log):
+        try:
+            logs = self.load_session_import_logs()
+            logs.append(log)
+            with open(self._get_session_logs_file(), "w", encoding="utf-8") as f:
+                json.dump([l.to_dict() for l in logs], f, indent=2, ensure_ascii=False)
+            return True
+        except Exception:
+            return False
+
+    def export_session_log(self, log, file_path):
+        try:
+            log_data = log.to_dict()
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(log_data, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception:
+            return False

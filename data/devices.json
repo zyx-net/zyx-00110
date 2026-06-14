@@ -1,10 +1,10 @@
 [
   {
-    "device_id": "VAL001",
-    "name": "Validation Test Device",
-    "status": "正常",
+    "device_id": "REV001",
+    "name": "Reviewer Device",
+    "status": "已停机",
     "abnormal_desc": "",
-    "create_time": "2026-06-15T01:19:09.257691",
-    "update_time": "2026-06-15T01:19:09.257696"
+    "create_time": "2026-06-15T02:41:06.667101",
+    "update_time": "2026-06-15T02:41:06.667107"
   }
 ]
