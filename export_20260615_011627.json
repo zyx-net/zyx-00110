@@ -1,0 +1,15 @@
+{
+  "devices": [
+    {
+      "device_id": "VAL001",
+      "name": "Validation Test Device",
+      "status": "正常",
+      "abnormal_desc": "",
+      "create_time": "2026-06-15T01:16:27.780816",
+      "update_time": "2026-06-15T01:16:27.780825"
+    }
+  ],
+  "repair_records": [],
+  "approval_records": [],
+  "export_time": "2026-06-15T01:16:27.781410"
+}

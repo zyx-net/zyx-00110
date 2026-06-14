@@ -50,29 +50,88 @@ class ImportService:
             devices = []
             repair_records = []
             approval_records = []
+            parse_errors = []
             
             if isinstance(data, dict):
                 if 'devices' in data:
-                    for d in data['devices']:
-                        devices.append(Device.from_dict(d))
+                    for idx, d in enumerate(data['devices']):
+                        try:
+                            if not d.get('device_id'):
+                                parse_errors.append(f"设备第{idx+1}行: 设备ID缺失")
+                                continue
+                            if not d.get('name'):
+                                parse_errors.append(f"设备第{idx+1}行: 设备名称缺失")
+                                continue
+                            if not d.get('status'):
+                                parse_errors.append(f"设备第{idx+1}行: 设备状态缺失")
+                                continue
+                            devices.append(Device.from_dict(d))
+                        except Exception as e:
+                            parse_errors.append(f"设备第{idx+1}行: 解析失败 - {str(e)}")
+                
                 if 'repair_records' in data:
-                    for r in data['repair_records']:
-                        repair_records.append(RepairRecord.from_dict(r))
+                    for idx, r in enumerate(data['repair_records']):
+                        try:
+                            if not r.get('record_id'):
+                                parse_errors.append(f"维修记录第{idx+1}行: 记录ID缺失")
+                                continue
+                            if not r.get('device_id'):
+                                parse_errors.append(f"维修记录第{idx+1}行: 设备ID缺失")
+                                continue
+                            if not r.get('repair_desc'):
+                                parse_errors.append(f"维修记录第{idx+1}行: 维修内容缺失")
+                                continue
+                            if not r.get('operator'):
+                                parse_errors.append(f"维修记录第{idx+1}行: 维修人员缺失")
+                                continue
+                            repair_records.append(RepairRecord.from_dict(r))
+                        except Exception as e:
+                            parse_errors.append(f"维修记录第{idx+1}行: 解析失败 - {str(e)}")
+                
                 if 'approval_records' in data:
-                    for a in data['approval_records']:
-                        approval_records.append(ApprovalRecord.from_dict(a))
+                    for idx, a in enumerate(data['approval_records']):
+                        try:
+                            if not a.get('record_id'):
+                                parse_errors.append(f"审批记录第{idx+1}行: 记录ID缺失")
+                                continue
+                            if not a.get('device_id'):
+                                parse_errors.append(f"审批记录第{idx+1}行: 设备ID缺失")
+                                continue
+                            if not a.get('approval_type'):
+                                parse_errors.append(f"审批记录第{idx+1}行: 审批类型缺失")
+                                continue
+                            if not a.get('approver'):
+                                parse_errors.append(f"审批记录第{idx+1}行: 审批人缺失")
+                                continue
+                            approval_records.append(ApprovalRecord.from_dict(a))
+                        except Exception as e:
+                            parse_errors.append(f"审批记录第{idx+1}行: 解析失败 - {str(e)}")
             elif isinstance(data, list):
-                for item in data:
-                    if 'device_id' in item and 'name' in item:
-                        devices.append(Device.from_dict(item))
+                for idx, item in enumerate(data):
+                    try:
+                        if 'device_id' in item and 'name' in item:
+                            if not item.get('device_id'):
+                                parse_errors.append(f"数据第{idx+1}行: 设备ID缺失")
+                                continue
+                            if not item.get('name'):
+                                parse_errors.append(f"数据第{idx+1}行: 设备名称缺失")
+                                continue
+                            devices.append(Device.from_dict(item))
+                    except Exception as e:
+                        parse_errors.append(f"数据第{idx+1}行: 解析失败 - {str(e)}")
             
-            return {
+            result = {
                 'devices': devices,
                 'repair_records': repair_records,
                 'approval_records': approval_records
-            }, None
+            }
+            
+            if parse_errors:
+                return result, "\n".join(parse_errors)
+            return result, None
+            
         except json.JSONDecodeError as e:
-            return None, f"JSON解析错误: {str(e)}"
+            return None, f"JSON格式错误: {str(e)}"
         except Exception as e:
             return None, f"读取文件失败: {str(e)}"
 
@@ -84,60 +143,121 @@ class ImportService:
             devices = []
             repair_records = []
             approval_records = []
+            parse_errors = []
             
             sections = content.split('=== ')
+            line_num = 0
             
             for section in sections:
                 if section.startswith('设备状态'):
-                    lines = section.split('\n')[2:]
-                    for line in lines:
+                    lines = section.split('\n')
+                    for idx, line in enumerate(lines[2:]):
+                        line_num += 1
                         line = line.strip()
                         if line:
                             parts = line.split(',')
-                            if len(parts) >= 6:
-                                devices.append(Device(
-                                    device_id=parts[0],
-                                    name=parts[1],
-                                    status=parts[2],
-                                    abnormal_desc=parts[3] if len(parts) > 3 else "",
-                                    create_time=parts[4] if len(parts) > 4 else None,
-                                    update_time=parts[5] if len(parts) > 5 else None
-                                ))
+                            try:
+                                if len(parts) < 2:
+                                    parse_errors.append(f"第{line_num}行: 设备数据不完整，至少需要设备ID和名称")
+                                    continue
+                                if not parts[0].strip():
+                                    parse_errors.append(f"第{line_num}行: 设备ID缺失")
+                                    continue
+                                if not parts[1].strip():
+                                    parse_errors.append(f"第{line_num}行: 设备名称缺失")
+                                    continue
+                                
+                                device = Device(
+                                    device_id=parts[0].strip(),
+                                    name=parts[1].strip(),
+                                    status=parts[2].strip() if len(parts) > 2 else DeviceStatus.NORMAL.value,
+                                    abnormal_desc=parts[3].strip() if len(parts) > 3 else "",
+                                    create_time=parts[4].strip() if len(parts) > 4 else None,
+                                    update_time=parts[5].strip() if len(parts) > 5 else None
+                                )
+                                devices.append(device)
+                            except Exception as e:
+                                parse_errors.append(f"第{line_num}行: 设备数据解析失败 - {str(e)}")
+                                
                 elif section.startswith('维修记录'):
-                    lines = section.split('\n')[2:]
-                    for line in lines:
+                    lines = section.split('\n')
+                    for idx, line in enumerate(lines[2:]):
+                        line_num += 1
                         line = line.strip()
                         if line:
                             parts = line.split(',')
-                            if len(parts) >= 5:
+                            try:
+                                if len(parts) < 4:
+                                    parse_errors.append(f"第{line_num}行: 维修记录不完整，至少需要记录ID、设备ID、维修内容和维修人员")
+                                    continue
+                                if not parts[0].strip():
+                                    parse_errors.append(f"第{line_num}行: 维修记录ID缺失")
+                                    continue
+                                if not parts[1].strip():
+                                    parse_errors.append(f"第{line_num}行: 维修记录设备ID缺失")
+                                    continue
+                                if not parts[2].strip():
+                                    parse_errors.append(f"第{line_num}行: 维修内容缺失")
+                                    continue
+                                if not parts[3].strip():
+                                    parse_errors.append(f"第{line_num}行: 维修人员缺失")
+                                    continue
+                                
                                 repair_records.append(RepairRecord(
-                                    record_id=parts[0],
-                                    device_id=parts[1],
-                                    repair_desc=parts[2],
-                                    operator=parts[3],
-                                    repair_time=parts[4] if len(parts) > 4 else None
+                                    record_id=parts[0].strip(),
+                                    device_id=parts[1].strip(),
+                                    repair_desc=parts[2].strip(),
+                                    operator=parts[3].strip(),
+                                    repair_time=parts[4].strip() if len(parts) > 4 else None
                                 ))
+                            except Exception as e:
+                                parse_errors.append(f"第{line_num}行: 维修记录解析失败 - {str(e)}")
+                                
                 elif section.startswith('审批记录'):
-                    lines = section.split('\n')[2:]
-                    for line in lines:
+                    lines = section.split('\n')
+                    for idx, line in enumerate(lines[2:]):
+                        line_num += 1
                         line = line.strip()
                         if line:
                             parts = line.split(',')
-                            if len(parts) >= 6:
+                            try:
+                                if len(parts) < 5:
+                                    parse_errors.append(f"第{line_num}行: 审批记录不完整，至少需要记录ID、设备ID、审批类型、审批意见和审批人")
+                                    continue
+                                if not parts[0].strip():
+                                    parse_errors.append(f"第{line_num}行: 审批记录ID缺失")
+                                    continue
+                                if not parts[1].strip():
+                                    parse_errors.append(f"第{line_num}行: 审批记录设备ID缺失")
+                                    continue
+                                if not parts[2].strip():
+                                    parse_errors.append(f"第{line_num}行: 审批类型缺失")
+                                    continue
+                                if not parts[4].strip():
+                                    parse_errors.append(f"第{line_num}行: 审批人缺失")
+                                    continue
+                                
                                 approval_records.append(ApprovalRecord(
-                                    record_id=parts[0],
-                                    device_id=parts[1],
-                                    approval_type=parts[2],
-                                    opinion=parts[3],
-                                    approver=parts[4],
-                                    approve_time=parts[5] if len(parts) > 5 else None
+                                    record_id=parts[0].strip(),
+                                    device_id=parts[1].strip(),
+                                    approval_type=parts[2].strip(),
+                                    opinion=parts[3].strip(),
+                                    approver=parts[4].strip(),
+                                    approve_time=parts[5].strip() if len(parts) > 5 else None
                                 ))
+                            except Exception as e:
+                                parse_errors.append(f"第{line_num}行: 审批记录解析失败 - {str(e)}")
             
-            return {
+            result = {
                 'devices': devices,
                 'repair_records': repair_records,
                 'approval_records': approval_records
-            }, None
+            }
+            
+            if parse_errors:
+                return result, "\n".join(parse_errors)
+            return result, None
+            
         except Exception as e:
             return None, f"CSV解析错误: {str(e)}"
 
@@ -200,12 +320,12 @@ class ImportService:
             return None, error
         
         if file_type == 'json':
-            data, error = self.parse_json_file(file_path)
+            data, parse_error = self.parse_json_file(file_path)
         else:
-            data, error = self.parse_csv_file(file_path)
+            data, parse_error = self.parse_csv_file(file_path)
         
-        if error:
-            return None, error
+        if data is None:
+            return None, parse_error
         
         preview_result = PreviewResult()
         
@@ -219,6 +339,9 @@ class ImportService:
         current_approval_ids = {a.record_id for a in current_approval_records}
         
         imported_device_ids = set()
+        
+        if parse_error:
+            preview_result.add_invalid({'_parse_error': parse_error}, f"解析警告: {parse_error}")
         
         for device in data['devices']:
             validation_errors = self.validate_device(device, current_devices, current_repair_records)
@@ -258,7 +381,8 @@ class ImportService:
             'file_type': file_type,
             'operator': operator,
             'is_supervisor': is_supervisor,
-            'data': data
+            'data': data,
+            'parse_error': parse_error
         }, None
 
     def execute_import(self, preview_info, skip_conflicts=True):
@@ -269,7 +393,8 @@ class ImportService:
         data = preview_info['data']
         
         if preview.invalid_rows and not skip_conflicts:
-            return False, f"存在 {len(preview.invalid_rows)} 条无效记录，请先修正后再导入"
+            invalid_details = "\n".join([f"- {row.reason}" for row in preview.invalid_rows])
+            return False, f"存在 {len(preview.invalid_rows)} 条无效记录，请先修正后再导入:\n{invalid_details}"
         
         log_id = f"IMP_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         
@@ -289,58 +414,61 @@ class ImportService:
             
             new_devices = 0
             overwrite_devices = 0
-            conflict_devices = 0
-            
-            for row in preview.new_rows:
-                if 'name' in row.row_data and 'status' in row.row_data:
-                    device = Device.from_dict(row.row_data)
-                    current_devices.append(device)
-                    new_devices += 1
-            
-            for row in preview.overwrite_rows:
-                if 'name' in row.row_data and 'status' in row.row_data:
-                    device = Device.from_dict(row.row_data)
-                    if device.device_id in current_device_map:
-                        idx = current_devices.index(current_device_map[device.device_id])
-                        current_devices[idx] = device
-                        overwrite_devices += 1
-            
-            for row in preview.conflict_rows:
-                conflict_devices += 1
             
             new_repairs = 0
             overwrite_repairs = 0
             
-            for row in preview.new_rows:
-                if 'repair_desc' in row.row_data:
-                    record = RepairRecord.from_dict(row.row_data)
-                    current_repair_records.append(record)
-                    new_repairs += 1
-            
-            for row in preview.overwrite_rows:
-                if 'repair_desc' in row.row_data:
-                    record = RepairRecord.from_dict(row.row_data)
-                    if record.record_id in current_repair_map:
-                        idx = current_repair_records.index(current_repair_map[record.record_id])
-                        current_repair_records[idx] = record
-                        overwrite_repairs += 1
-            
             new_approvals = 0
             overwrite_approvals = 0
             
-            for row in preview.new_rows:
-                if 'approval_type' in row.row_data:
-                    record = ApprovalRecord.from_dict(row.row_data)
+            failed_records = []
+            
+            for device in data['devices']:
+                validation_errors = self.validate_device(device, current_devices, current_repair_records)
+                if validation_errors:
+                    failed_records.append(f"设备 {device.device_id or '未知'}: {'; '.join(validation_errors)}")
+                    continue
+                
+                if device.device_id in current_device_map:
+                    idx = current_devices.index(current_device_map[device.device_id])
+                    current_devices[idx] = device
+                    overwrite_devices += 1
+                else:
+                    current_devices.append(device)
+                    new_devices += 1
+            
+            for record in data['repair_records']:
+                validation_errors = self.validate_repair_record(record, data['devices'])
+                if validation_errors:
+                    failed_records.append(f"维修记录 {record.record_id or '未知'}: {'; '.join(validation_errors)}")
+                    continue
+                
+                if record.record_id in current_repair_map:
+                    idx = current_repair_records.index(current_repair_map[record.record_id])
+                    current_repair_records[idx] = record
+                    overwrite_repairs += 1
+                else:
+                    current_repair_records.append(record)
+                    new_repairs += 1
+            
+            for record in data['approval_records']:
+                validation_errors = self.validate_approval_record(record, data['devices'])
+                if validation_errors:
+                    failed_records.append(f"审批记录 {record.record_id or '未知'}: {'; '.join(validation_errors)}")
+                    continue
+                
+                if record.record_id in current_approval_map:
+                    idx = current_approval_records.index(current_approval_map[record.record_id])
+                    current_approval_records[idx] = record
+                    overwrite_approvals += 1
+                else:
                     current_approval_records.append(record)
                     new_approvals += 1
             
-            for row in preview.overwrite_rows:
-                if 'approval_type' in row.row_data:
-                    record = ApprovalRecord.from_dict(row.row_data)
-                    if record.record_id in current_approval_map:
-                        idx = current_approval_records.index(current_approval_map[record.record_id])
-                        current_approval_records[idx] = record
-                        overwrite_approvals += 1
+            if failed_records:
+                self.backup_service.rollback()
+                error_msg = "\n".join(failed_records)
+                return False, f"导入失败，已回滚数据。以下记录未通过校验:\n{error_msg}"
             
             self.storage.save_devices(current_devices)
             self.storage.save_repair_records(current_repair_records)
@@ -358,11 +486,11 @@ class ImportService:
                 file_type=preview_info['file_type'],
                 operator=preview_info['operator'],
                 is_supervisor=preview_info['is_supervisor'],
-                total_rows=preview.total_rows,
-                new_rows=len(preview.new_rows),
-                overwrite_rows=len(preview.overwrite_rows),
-                conflict_rows=len(preview.conflict_rows),
-                invalid_rows=len(preview.invalid_rows),
+                total_rows=len(data['devices']) + len(data['repair_records']) + len(data['approval_records']),
+                new_rows=new_devices + new_repairs + new_approvals,
+                overwrite_rows=overwrite_devices + overwrite_repairs + overwrite_approvals,
+                conflict_rows=0,
+                invalid_rows=len(failed_records),
                 status="success",
                 message=f"导入成功：新增 {new_devices + new_repairs + new_approvals} 条，覆盖 {overwrite_devices + overwrite_repairs + overwrite_approvals} 条"
             )

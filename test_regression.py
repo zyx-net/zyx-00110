@@ -13,10 +13,18 @@ from service.device_service import DeviceService, SUPERVISORS
 from service.import_service import ImportService
 from service.backup_service import BackupService
 from model.status import DeviceStatus
+from model.device import Device, RepairRecord, ApprovalRecord
 
 PASS = "[PASS]"
 FAIL = "[FAIL]"
 OK = "[OK]"
+
+
+def get_latest_export_file(export_dir, extension):
+    files = [f for f in os.listdir(export_dir) if f.endswith(extension) and f.startswith('export_')]
+    if not files:
+        return None
+    return max(files, key=lambda x: os.path.getmtime(os.path.join(export_dir, x)))
 
 
 def clean_data():
@@ -89,10 +97,12 @@ def test_main_flow():
     print(f"  {PASS} Records exported")
     print(f"    {msg}")
 
-    json_file = [f for f in os.listdir(export_dir) if f.endswith('.json')][-1]
-    csv_file = [f for f in os.listdir(export_dir) if f.endswith('.csv')][-1]
-    assert os.path.exists(os.path.join(export_dir, json_file)), "JSON file not generated"
-    assert os.path.exists(os.path.join(export_dir, csv_file)), "CSV file not generated"
+    json_file = get_latest_export_file(export_dir, '.json')
+    csv_file = get_latest_export_file(export_dir, '.csv')
+    assert json_file is not None, "JSON file not generated"
+    assert csv_file is not None, "CSV file not generated"
+    assert os.path.exists(os.path.join(export_dir, json_file)), "JSON file not found"
+    assert os.path.exists(os.path.join(export_dir, csv_file)), "CSV file not found"
     print(f"  {PASS} Both JSON and CSV files generated")
 
     print("\n[Step 8] Verify Persistence After Restart")
@@ -247,7 +257,8 @@ def test_json_import():
     assert success, f"Export failed: {msg}"
     
     export_dir = service.config.export_dir
-    json_file = [f for f in os.listdir(export_dir) if f.endswith('.json')][-1]
+    json_file = get_latest_export_file(export_dir, '.json')
+    assert json_file is not None, "No export JSON file found"
     json_path = os.path.join(export_dir, json_file)
     print(f"  {PASS} Exported to {json_path}")
     
@@ -297,7 +308,8 @@ def test_csv_import():
     assert success, f"Export failed: {msg}"
     
     export_dir = service.config.export_dir
-    csv_file = [f for f in os.listdir(export_dir) if f.endswith('.csv')][-1]
+    csv_file = get_latest_export_file(export_dir, '.csv')
+    assert csv_file is not None, "No export CSV file found"
     csv_path = os.path.join(export_dir, csv_file)
     print(f"  {PASS} Exported to {csv_path}")
     
@@ -341,7 +353,8 @@ def test_conflict_skip():
     assert success, f"Export failed: {msg}"
     
     export_dir = service.config.export_dir
-    json_file = [f for f in os.listdir(export_dir) if f.endswith('.json')][-1]
+    json_file = get_latest_export_file(export_dir, '.json')
+    assert json_file is not None, "No export JSON file found"
     json_path = os.path.join(export_dir, json_file)
     
     print("\n[Step 2] Modify device and try to import")
@@ -380,7 +393,8 @@ def test_permission_block():
     assert success, f"Export failed: {msg}"
     
     export_dir = service.config.export_dir
-    json_file = [f for f in os.listdir(export_dir) if f.endswith('.json')][-1]
+    json_file = get_latest_export_file(export_dir, '.json')
+    assert json_file is not None, "No export JSON file found"
     json_path = os.path.join(export_dir, json_file)
     
     print("\n[Step 2] Test non-supervisor can preview but cannot import")
@@ -429,7 +443,8 @@ def test_rollback_restore():
     assert success, f"Export failed: {msg}"
     
     export_dir = service.config.export_dir
-    json_file = [f for f in os.listdir(export_dir) if f.endswith('.json')][-1]
+    json_file = get_latest_export_file(export_dir, '.json')
+    assert json_file is not None, "No export JSON file found"
     json_path = os.path.join(export_dir, json_file)
     
     with open(json_path, 'r', encoding='utf-8') as f:
@@ -493,7 +508,8 @@ def test_restart_persistence():
     assert success, f"Export failed: {msg}"
     
     export_dir = service.config.export_dir
-    json_file = [f for f in os.listdir(export_dir) if f.endswith('.json')][-1]
+    json_file = get_latest_export_file(export_dir, '.json')
+    assert json_file is not None, "No export JSON file found"
     json_path = os.path.join(export_dir, json_file)
     
     print("\n[Step 2] Import and verify rollback state saved")
@@ -530,6 +546,300 @@ def test_restart_persistence():
     print("=" * 60)
 
 
+def test_unauthorized_approval_import():
+    print("\n" + "=" * 60)
+    print("Unauthorized Approval Import Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    
+    print("\n[Step 1] Create device with approval record")
+    service.add_device("UNAUTH001", "Unauthorized Test Device")
+    service.report_abnormal("UNAUTH001", "Test")
+    service.apply_stop("UNAUTH001", "Test")
+    service.start_repair("UNAUTH001", "", "")
+    service.record_repair("UNAUTH001", "Fixed", "Zhang San")
+    
+    export_dir = service.config.export_dir
+    success, msg = service.export_records()
+    assert success, f"Export failed: {msg}"
+    
+    json_file = get_latest_export_file(export_dir, '.json')
+    assert json_file is not None, "No export JSON file found"
+    json_path = os.path.join(export_dir, json_file)
+    
+    with open(json_path, 'r', encoding='utf-8') as f:
+        export_data = json.load(f)
+    
+    export_data['approval_records'].append({
+        "record_id": "APR_TEST_UNAUTH",
+        "device_id": "UNAUTH001",
+        "approval_type": "复机",
+        "opinion": "Approved",
+        "approver": "RegularUser",
+        "approve_time": "2026-01-01T00:00:00"
+    })
+    
+    test_file = os.path.join(export_dir, "unauthorized_test.json")
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(export_data, f)
+    
+    print("\n[Step 2] Preview should mark unauthorized approval as invalid")
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    
+    preview_info, error = import_service.preview_import(test_file, "admin", True)
+    assert error is None, f"Preview failed: {error}"
+    
+    invalid_count = len(preview_info['preview'].invalid_rows)
+    assert invalid_count > 0, "Should have invalid rows"
+    
+    has_unauthorized_error = any("无复机审批权限" in row.reason for row in preview_info['preview'].invalid_rows)
+    assert has_unauthorized_error, "Should detect unauthorized approval"
+    print(f"  {PASS} Preview correctly identified unauthorized approval as invalid")
+    
+    print("\n[Step 3] Execute import should fail due to unauthorized approval")
+    success, msg = import_service.execute_import(preview_info, skip_conflicts=False)
+    assert not success, "Import should fail with unauthorized approval"
+    assert "无复机审批权限" in msg or "权限" in msg, f"Wrong error message: {msg}"
+    print(f"  {PASS} Import blocked: {msg[:50]}...")
+    
+    print("\n[Step 4] Verify no data was imported")
+    service.devices = service.storage.load_devices()
+    assert len(service.devices) == 0, "No devices should be imported"
+    print(f"  {PASS} No data imported due to validation failure")
+    
+    print("\n" + "=" * 60)
+    print(f"Unauthorized Approval Import Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_missing_fields_import():
+    print("\n" + "=" * 60)
+    print("Missing Fields Import Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    
+    print("\n[Step 1] Create test JSON with missing fields")
+    test_data = {
+        "devices": [
+            {
+                "device_id": "DEV001",
+                "name": "Valid Device",
+                "status": "Normal"
+            },
+            {
+                "name": "Missing Device ID",
+                "status": "Normal"
+            },
+            {
+                "device_id": "DEV003",
+                "status": "Normal"
+            },
+            {
+                "device_id": "",
+                "name": "Empty Device ID",
+                "status": "Normal"
+            }
+        ],
+        "repair_records": [
+            {
+                "record_id": "R001",
+                "device_id": "DEV001",
+                "repair_desc": "Fixed",
+                "operator": "Zhang San"
+            },
+            {
+                "record_id": "R002",
+                "device_id": "DEV001",
+                "repair_desc": "Fixed"
+            }
+        ],
+        "approval_records": [
+            {
+                "record_id": "A001",
+                "device_id": "DEV001",
+                "approval_type": "停机",
+                "opinion": "OK",
+                "approver": "admin"
+            },
+            {
+                "record_id": "A002",
+                "device_id": "DEV001",
+                "approval_type": "复机",
+                "opinion": "OK"
+            }
+        ]
+    }
+    
+    export_dir = service.config.export_dir
+    test_file = os.path.join(export_dir, "missing_fields_test.json")
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    print("\n[Step 2] Preview should detect missing fields")
+    import_service = ImportService(service.storage, service)
+    
+    preview_info, error = import_service.preview_import(test_file, "admin", True)
+    assert error is None, f"Preview failed: {error}"
+    
+    invalid_count = len(preview_info['preview'].invalid_rows)
+    assert invalid_count > 0, "Should have invalid rows"
+    
+    reasons = [row.reason for row in preview_info['preview'].invalid_rows]
+    
+    has_missing_device_id = any("设备ID缺失" in r for r in reasons)
+    assert has_missing_device_id, "Should detect missing device ID"
+    
+    has_missing_name = any("设备名称缺失" in r for r in reasons)
+    assert has_missing_name, "Should detect missing device name"
+    
+    has_missing_operator = any("维修人员缺失" in r for r in reasons)
+    assert has_missing_operator, "Should detect missing repair operator"
+    
+    has_missing_approver = any("审批人缺失" in r for r in reasons)
+    assert has_missing_approver, "Should detect missing approver"
+    
+    print(f"  {PASS} Preview found {invalid_count} invalid rows with specific errors")
+    for reason in reasons:
+        print(f"    - {reason}")
+    
+    print("\n[Step 3] Execute import should fail with specific errors")
+    success, msg = import_service.execute_import(preview_info, skip_conflicts=False)
+    assert not success, "Import should fail with missing fields"
+    assert "设备ID缺失" in msg or "设备名称缺失" in msg, f"Wrong error message: {msg}"
+    print(f"  {PASS} Import blocked with specific errors")
+    
+    print("\n" + "=" * 60)
+    print(f"Missing Fields Import Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_csv_missing_fields_import():
+    print("\n" + "=" * 60)
+    print("CSV Missing Fields Import Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    
+    print("\n[Step 1] Create test CSV with missing fields")
+    csv_content = """=== 设备状态 ===
+设备ID,名称,状态,异常描述,创建时间,更新时间
+DEV001,Valid Device,Normal,,2026-01-01,2026-01-01
+,Missing ID,Normal,,2026-01-01,2026-01-01
+DEV003,,Normal,,2026-01-01,2026-01-01
+
+=== 维修记录 ===
+记录ID,设备ID,维修内容,维修人员,维修时间
+R001,DEV001,Fixed,Zhang San,2026-01-01
+R002,DEV001,Fixed,,2026-01-01
+
+=== 审批记录 ===
+记录ID,设备ID,审批类型,审批意见,审批人,审批时间
+A001,DEV001,停机,OK,admin,2026-01-01
+A002,DEV001,复机,OK,,2026-01-01
+"""
+    
+    export_dir = service.config.export_dir
+    test_file = os.path.join(export_dir, "csv_missing_fields_test.csv")
+    with open(test_file, 'w', encoding='utf-8') as f:
+        f.write(csv_content)
+    
+    print("\n[Step 2] Preview should detect missing fields in CSV")
+    import_service = ImportService(service.storage, service)
+    
+    preview_info, error = import_service.preview_import(test_file, "admin", True)
+    assert error is None, f"Preview failed: {error}"
+    
+    invalid_count = len(preview_info['preview'].invalid_rows)
+    assert invalid_count > 0, "Should have invalid rows"
+    
+    reasons = [row.reason for row in preview_info['preview'].invalid_rows]
+    
+    has_missing_device_id = any("设备ID缺失" in r for r in reasons)
+    assert has_missing_device_id, "Should detect missing device ID in CSV"
+    
+    has_missing_name = any("设备名称缺失" in r for r in reasons)
+    assert has_missing_name, "Should detect missing device name in CSV"
+    
+    has_missing_operator = any("维修人员缺失" in r for r in reasons)
+    assert has_missing_operator, "Should detect missing repair operator in CSV"
+    
+    has_missing_approver = any("审批人缺失" in r for r in reasons)
+    assert has_missing_approver, "Should detect missing approver in CSV"
+    
+    print(f"  {PASS} Preview found {invalid_count} invalid rows in CSV")
+    
+    print("\n[Step 3] Execute import should fail")
+    success, msg = import_service.execute_import(preview_info, skip_conflicts=False)
+    assert not success, "Import should fail"
+    print(f"  {PASS} CSV import blocked with specific errors")
+    
+    print("\n" + "=" * 60)
+    print(f"CSV Missing Fields Import Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_validation_during_write():
+    print("\n" + "=" * 60)
+    print("Validation During Write Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    
+    print("\n[Step 1] Create valid export")
+    service.add_device("VAL001", "Validation Test Device")
+    export_dir = service.config.export_dir
+    success, msg = service.export_records()
+    assert success, f"Export failed: {msg}"
+    
+    json_file = get_latest_export_file(export_dir, '.json')
+    assert json_file is not None, "No export JSON file found"
+    json_path = os.path.join(export_dir, json_file)
+    
+    print("\n[Step 2] Preview with valid data")
+    import_service = ImportService(service.storage, service)
+    
+    preview_info, error = import_service.preview_import(json_path, "admin", True)
+    assert error is None, f"Preview failed: {error}"
+    
+    print("\n[Step 3] Add malicious approval record to preview data (simulating tampering)")
+    malicious_record = ApprovalRecord(
+        record_id="APR_POST_PREVIEW",
+        device_id="VAL001",
+        approval_type="复机",
+        opinion="Invalid",
+        approver="Hacker"
+    )
+    preview_info['data']['approval_records'].append(malicious_record)
+    
+    print("\n[Step 4] Execute import should still validate during write")
+    success, msg = import_service.execute_import(preview_info)
+    assert not success, "Import should fail due to validation during write"
+    assert "无复机审批权限" in msg or "Hacker" in msg, f"Wrong error message: {msg}"
+    print(f"  {PASS} Write-time validation blocked malicious data: {msg[:50]}...")
+    
+    print("\n[Step 5] Verify data was rolled back")
+    service.devices = service.storage.load_devices()
+    assert len(service.devices) == 1, "Should have original device after rollback"
+    assert service.find_device("VAL001") is not None, "Original device should exist"
+    
+    approvals = service.get_approval_records_by_device("VAL001")
+    malicious_found = any(a.record_id == "APR_POST_PREVIEW" for a in approvals)
+    assert not malicious_found, "Malicious record should not be imported"
+    print(f"  {PASS} Data rolled back, malicious record blocked")
+    
+    print("\n" + "=" * 60)
+    print(f"Validation During Write Test: {PASS} All Passed")
+    print("=" * 60)
+
+
 if __name__ == "__main__":
     try:
         test_nameerror_fix()
@@ -541,6 +851,10 @@ if __name__ == "__main__":
         test_permission_block()
         test_rollback_restore()
         test_restart_persistence()
+        test_unauthorized_approval_import()
+        test_missing_fields_import()
+        test_csv_missing_fields_import()
+        test_validation_during_write()
         print("\n" + "=" * 60)
         print(f"All Tests Passed!")
         print("=" * 60)
