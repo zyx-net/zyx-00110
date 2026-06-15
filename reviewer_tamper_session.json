@@ -1,0 +1,22 @@
+{
+  "devices": [
+    {
+      "device_id": "REV_TAMPER_001",
+      "name": "Reviewer Tamper Device",
+      "status": "正常",
+      "abnormal_desc": "",
+      "create_time": "2026-06-15T12:10:00",
+      "update_time": "2026-06-15T12:10:00"
+    },
+    {
+      "device_id": "REV_TAMPER_002",
+      "name": "Reviewer Tamper Device 2",
+      "status": "??",
+      "abnormal_desc": "",
+      "create_time": "2026-06-15T12:10:01",
+      "update_time": "2026-06-15T12:10:01"
+    }
+  ],
+  "repair_records": [],
+  "approval_records": []
+}

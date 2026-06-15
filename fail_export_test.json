@@ -1,0 +1,1 @@
+{"devices": [{"device_id": "FAIL001", "name": "Fail Device", "status": "\u6b63\u5e38"}], "repair_records": [{"record_id": "REP001", "device_id": "NONEXISTENT", "repair_desc": "Test", "operator": "Zhang San"}], "approval_records": []}

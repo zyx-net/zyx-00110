@@ -1,0 +1,149 @@
+{
+  "session_info": {
+    "session_id": "SESSION_20260615112840_2a609c329c6e",
+    "file_path": "reviewer_fail_session.json",
+    "file_type": "json",
+    "operator": "admin",
+    "is_supervisor": true,
+    "created_time": "2026-06-15T11:28:40.038391",
+    "updated_time": "2026-06-15T11:29:07.912684",
+    "status": "waiting_confirm",
+    "committed": false,
+    "commit_time": null,
+    "result_message": "",
+    "can_undo": false
+  },
+  "event_chain": [
+    {
+      "event_type": "session_created",
+      "event_time": "2026-06-15T11:28:40.038526",
+      "operator": "admin",
+      "details": {
+        "file_path": "reviewer_fail_session.json",
+        "file_type": "json",
+        "file_checksum": "d96f0242f5344fb4cbda4b93229647b4"
+      }
+    },
+    {
+      "event_type": "preview_generated",
+      "event_time": "2026-06-15T11:28:40.038542",
+      "operator": "admin",
+      "details": {
+        "total_new": 1,
+        "total_overwrite": 0,
+        "total_conflict": 1,
+        "total_invalid": 1
+      }
+    },
+    {
+      "event_type": "conflict_resolved",
+      "event_time": "2026-06-15T11:28:51.235165",
+      "operator": null,
+      "details": {
+        "record_id": "REV_BASE_001",
+        "record_type": "device",
+        "decision": "保留本地"
+      }
+    },
+    {
+      "event_type": "commit_started",
+      "event_time": "2026-06-15T11:29:07.912416",
+      "operator": "admin",
+      "details": {}
+    },
+    {
+      "event_type": "validation_started",
+      "event_time": "2026-06-15T11:29:07.912628",
+      "operator": "admin",
+      "details": {}
+    },
+    {
+      "event_type": "validation_failed",
+      "event_time": "2026-06-15T11:29:07.912680",
+      "operator": "admin",
+      "details": {
+        "error_count": 1
+      }
+    }
+  ],
+  "error_snapshots": [
+    {
+      "error_type": "dependency_validation_failed",
+      "error_message": "依赖关系校验失败: 维修记录 REV_REP_BAD_001 关联的设备 REV_MISSING_001 不存在",
+      "error_time": "2026-06-15T11:29:07.912668",
+      "context": {
+        "errors": [
+          "维修记录 REV_REP_BAD_001 关联的设备 REV_MISSING_001 不存在"
+        ]
+      },
+      "stack_trace": null
+    }
+  ],
+  "conflict_resolutions": [
+    {
+      "record_id": "REV_BASE_001",
+      "record_type": "device",
+      "row_data": {
+        "device_id": "REV_BASE_001",
+        "name": "Reviewer Base Device From Import",
+        "status": "已停机",
+        "abnormal_desc": "from reviewer import",
+        "create_time": "2026-06-15T12:00:00",
+        "update_time": "2026-06-15T12:00:00"
+      },
+      "decision": "keep_local",
+      "decision_time": "2026-06-15T11:28:51.235155"
+    }
+  ],
+  "preview_summary": {
+    "devices": {
+      "new": 1,
+      "overwrite": 0,
+      "conflict": 1,
+      "invalid": 0
+    },
+    "repair_records": {
+      "new": 0,
+      "overwrite": 0,
+      "conflict": 0,
+      "invalid": 1
+    },
+    "approval_records": {
+      "new": 0,
+      "overwrite": 0,
+      "conflict": 0,
+      "invalid": 0
+    }
+  },
+  "export_time": "2026-06-15T11:29:23.090735",
+  "raw_data": {
+    "devices": [
+      {
+        "device_id": "REV_BASE_001",
+        "name": "Reviewer Base Device From Import",
+        "status": "已停机",
+        "abnormal_desc": "from reviewer import",
+        "create_time": "2026-06-15T12:00:00",
+        "update_time": "2026-06-15T12:00:00"
+      },
+      {
+        "device_id": "REV_NEW_001",
+        "name": "Reviewer New Device",
+        "status": "正常",
+        "abnormal_desc": "",
+        "create_time": "2026-06-15T12:00:00",
+        "update_time": "2026-06-15T12:00:00"
+      }
+    ],
+    "repair_records": [
+      {
+        "record_id": "REV_REP_BAD_001",
+        "device_id": "REV_MISSING_001",
+        "repair_desc": "bad dependency by reviewer",
+        "operator": "reviewer",
+        "repair_time": "2026-06-15T12:00:00"
+      }
+    ],
+    "approval_records": []
+  }
+}

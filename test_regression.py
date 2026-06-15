@@ -1925,6 +1925,300 @@ def test_session_permission_block():
     print("=" * 60)
 
 
+def test_session_permission_view_block():
+    print("\n" + "=" * 60)
+    print("Session Permission View Block Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create session by UserA")
+    service.add_device("VIEW001", "View Test Device")
+    export_dir = service.config.export_dir
+    test_data = {
+        "devices": [{"device_id": "VIEW001", "name": "View Test Device", "status": "正常"}],
+        "repair_records": [],
+        "approval_records": []
+    }
+    test_file = os.path.join(export_dir, "view_perm_test.json")
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "UserA", False)
+    session, _ = session_manager.create_session(
+        file_path=test_file,
+        file_type='json',
+        operator="UserA",
+        is_supervisor=False,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    print(f"  {PASS} Session created by UserA")
+    
+    print("\n[Step 2] Verify UserA can view their own session")
+    user_a_sessions = session_manager.get_user_sessions("UserA", False)
+    assert len(user_a_sessions) == 1, f"UserA should see 1 session, got {len(user_a_sessions)}"
+    assert user_a_sessions[0].session_id == session.session_id
+    print(f"  {PASS} UserA can view their session")
+    
+    print("\n[Step 3] Verify UserB cannot view UserA's session")
+    user_b_sessions = session_manager.get_user_sessions("UserB", False)
+    assert len(user_b_sessions) == 0, f"UserB should not see UserA's session, got {len(user_b_sessions)}"
+    print(f"  {PASS} UserB cannot view UserA's session")
+    
+    print("\n[Step 4] Verify supervisor can view all sessions")
+    all_sessions = session_manager.get_user_sessions("admin", True)
+    assert len(all_sessions) >= 1, f"Supervisor should see all sessions"
+    print(f"  {PASS} Supervisor can view all sessions")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Permission View Block Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_failed_session_export_permission():
+    print("\n" + "=" * 60)
+    print("Failed Session Export Permission Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create a session that will fail")
+    test_data = {
+        "devices": [
+            {"device_id": "FAIL001", "name": "Fail Device", "status": "正常"}
+        ],
+        "repair_records": [
+            {"record_id": "REP001", "device_id": "NONEXISTENT", "repair_desc": "Test", "operator": "Zhang San"}
+        ],
+        "approval_records": []
+    }
+    test_file = os.path.join(service.config.export_dir, "fail_export_test.json")
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "UserA", True)
+    session, _ = session_manager.create_session(
+        file_path=test_file,
+        file_type='json',
+        operator="UserA",
+        is_supervisor=True,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    
+    success, msg = session_manager.commit_import(session, "UserA", True)
+    assert not success, f"Import should fail but succeeded: {msg}"
+    print(f"  {PASS} Session failed as expected: {msg}")
+    
+    print("\n[Step 2] UserA can export their own failed session")
+    export_path = os.path.join(service.config.export_dir, "user_a_error.json")
+    success, msg = session_manager.export_failed_session_snapshot(session.session_id, export_path, "UserA", True)
+    assert success, f"UserA should be able to export their session: {msg}"
+    assert os.path.exists(export_path)
+    print(f"  {PASS} UserA can export their failed session")
+    
+    print("\n[Step 3] UserB cannot export UserA's failed session")
+    export_path_b = os.path.join(service.config.export_dir, "user_b_error.json")
+    success, msg = session_manager.export_failed_session_snapshot(session.session_id, export_path_b, "UserB", False)
+    assert not success, "UserB should not be able to export"
+    assert "权限" in msg, f"Should show permission error: {msg}"
+    print(f"  {PASS} UserB blocked from exporting UserA's session: {msg}")
+    
+    print("\n[Step 4] Supervisor can export any failed session")
+    export_path_super = os.path.join(service.config.export_dir, "supervisor_error.json")
+    success, msg = session_manager.export_failed_session_snapshot(session.session_id, export_path_super, "admin", True)
+    assert success, f"Supervisor should be able to export: {msg}"
+    print(f"  {PASS} Supervisor can export failed session")
+    
+    print("\n" + "=" * 60)
+    print(f"Failed Session Export Permission Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_session_delete_permission():
+    print("\n" + "=" * 60)
+    print("Session Delete Permission Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create session by UserA")
+    test_data = {"devices": [{"device_id": "DEL001", "name": "Delete Test", "status": "正常"}], "repair_records": [], "approval_records": []}
+    test_file = os.path.join(service.config.export_dir, "delete_test.json")
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "UserA", False)
+    session, _ = session_manager.create_session(
+        file_path=test_file,
+        file_type='json',
+        operator="UserA",
+        is_supervisor=False,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    print(f"  {PASS} Session created by UserA")
+    
+    print("\n[Step 2] UserA can delete their own session")
+    success, msg = session_manager.delete_session(session.session_id, "UserA", False)
+    assert success, f"UserA should be able to delete their session: {msg}"
+    print(f"  {PASS} UserA deleted their session")
+    
+    print("\n[Step 3] Create another session and test UserB cannot delete")
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "UserC", False)
+    session2, _ = session_manager.create_session(
+        file_path=test_file,
+        file_type='json',
+        operator="UserC",
+        is_supervisor=False,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    
+    success, msg = session_manager.delete_session(session2.session_id, "UserB", False)
+    assert not success, "UserB should not be able to delete UserC's session"
+    assert "权限" in msg, f"Should show permission error: {msg}"
+    print(f"  {PASS} UserB blocked from deleting UserC's session")
+    
+    print("\n[Step 4] Supervisor can delete any session")
+    success, msg = session_manager.delete_session(session2.session_id, "admin", True)
+    assert success, f"Supervisor should be able to delete: {msg}"
+    print(f"  {PASS} Supervisor deleted session")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Delete Permission Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_undo_permission():
+    print("\n" + "=" * 60)
+    print("Undo Permission Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create and commit a session")
+    service.add_device("UNDO001", "Undo Perm Test")
+    test_data = {"devices": [{"device_id": "UNDO001", "name": "Undo Perm Test", "status": "正常"}], "repair_records": [], "approval_records": []}
+    test_file = os.path.join(service.config.export_dir, "undo_perm_test.json")
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "UserA", True)
+    session, _ = session_manager.create_session(
+        file_path=test_file,
+        file_type='json',
+        operator="UserA",
+        is_supervisor=True,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    
+    session_manager.resolve_conflict(session.session_id, "UNDO001", "device", 
+                                    preview_result.devices["conflict"][0].row_data,
+                                    ConflictDecision.OVERWRITE_LOCAL)
+    
+    success, msg = session_manager.commit_import(session, "UserA", True)
+    assert success, f"Import should succeed: {msg}"
+    print(f"  {PASS} Session committed")
+    
+    print("\n[Step 2] UserA can undo their own session")
+    success, msg = session_manager.undo_import(session, "UserA", True)
+    assert success, f"UserA should be able to undo: {msg}"
+    print(f"  {PASS} UserA undid their session")
+    
+    print("\n[Step 3] Test non-supervisor cannot undo")
+    service.add_device("UNDO003", "Undo Perm Test 3")
+    test_data2 = {"devices": [{"device_id": "UNDO003", "name": "Undo Perm Test 3", "status": "已停机"}], "repair_records": [], "approval_records": []}
+    test_file2 = os.path.join(service.config.export_dir, "undo_perm_test3.json")
+    with open(test_file2, 'w', encoding='utf-8') as f:
+        json.dump(test_data2, f)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(test_file2, "UserB", True)
+    session2, _ = session_manager.create_session(
+        file_path=test_file2,
+        file_type='json',
+        operator="UserB",
+        is_supervisor=True,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    
+    session_manager.resolve_conflict(session2.session_id, "UNDO003", "device", 
+                                    preview_result.devices["conflict"][0].row_data,
+                                    ConflictDecision.OVERWRITE_LOCAL)
+    
+    success, msg = session_manager.commit_import(session2, "UserB", True)
+    assert success, f"Import should succeed: {msg}"
+    
+    success, msg = session_manager.undo_import(session2, "RegularUser", False)
+    assert not success, "Regular user should not be able to undo"
+    assert "权限" in msg, f"Should show permission error: {msg}"
+    print(f"  {PASS} Non-supervisor blocked from undo")
+    
+    print("\n" + "=" * 60)
+    print(f"Undo Permission Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_session_summary():
+    print("\n" + "=" * 60)
+    print("Session Summary Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create session")
+    test_data = {"devices": [{"device_id": "SUM001", "name": "Summary Test", "status": "正常"}], "repair_records": [], "approval_records": []}
+    test_file = os.path.join(service.config.export_dir, "summary_test.json")
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "admin", True)
+    session, _ = session_manager.create_session(
+        file_path=test_file,
+        file_type='json',
+        operator="admin",
+        is_supervisor=True,
+        parsed_data=raw_data,
+        preview_result=preview_result
+    )
+    
+    print("\n[Step 2] Get session summary")
+    summary, error = session_manager.get_session_summary(session.session_id, "admin", True)
+    assert summary is not None, "Summary should be returned"
+    assert summary["session_id"] == session.session_id
+    assert summary["operator"] == "admin"
+    assert "preview_summary" in summary
+    print(f"  {PASS} Session summary retrieved")
+    
+    print("\n[Step 3] Non-owner cannot get summary")
+    summary, error = session_manager.get_session_summary(session.session_id, "OtherUser", False)
+    assert summary is None, "Other user should not get summary"
+    assert "权限" in error, f"Should show permission error: {error}"
+    print(f"  {PASS} Non-owner blocked from getting summary")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Summary Test: {PASS} All Passed")
+    print("=" * 60)
+
+
 if __name__ == "__main__":
     try:
         test_nameerror_fix()
@@ -1952,9 +2246,15 @@ if __name__ == "__main__":
         test_session_batch_decision()
         test_session_restart_recovery()
         test_session_undo_after_import()
+        test_session_permission_view_block()
+        test_failed_session_export_permission()
+        test_session_delete_permission()
+        test_undo_permission()
+        test_session_summary()
         print("\n" + "=" * 60)
         print(f"All Tests Passed!")
         print("=" * 60)
+        sys.exit(0)
     except AssertionError as e:
         print(f"\n{FAIL} Test failed: {e}")
         sys.exit(1)

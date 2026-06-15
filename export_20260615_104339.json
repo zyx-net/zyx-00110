@@ -1,0 +1,23 @@
+{
+  "devices": [
+    {
+      "device_id": "CSV001",
+      "name": "CSV Test Device 1",
+      "status": "待停机审批",
+      "abnormal_desc": "CSV test abnormal",
+      "create_time": "2026-06-15T10:43:39.996582",
+      "update_time": "2026-06-15T10:43:39.997720"
+    },
+    {
+      "device_id": "CSV002",
+      "name": "CSV Test Device 2",
+      "status": "正常",
+      "abnormal_desc": "",
+      "create_time": "2026-06-15T10:43:39.997202",
+      "update_time": "2026-06-15T10:43:39.997208"
+    }
+  ],
+  "repair_records": [],
+  "approval_records": [],
+  "export_time": "2026-06-15T10:43:39.998497"
+}

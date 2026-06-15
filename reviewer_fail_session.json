@@ -1,0 +1,30 @@
+{
+  "devices": [
+    {
+      "device_id": "REV_BASE_001",
+      "name": "Reviewer Base Device From Import",
+      "status": "已停机",
+      "abnormal_desc": "from reviewer import",
+      "create_time": "2026-06-15T12:00:00",
+      "update_time": "2026-06-15T12:00:00"
+    },
+    {
+      "device_id": "REV_NEW_001",
+      "name": "Reviewer New Device",
+      "status": "正常",
+      "abnormal_desc": "",
+      "create_time": "2026-06-15T12:00:00",
+      "update_time": "2026-06-15T12:00:00"
+    }
+  ],
+  "repair_records": [
+    {
+      "record_id": "REV_REP_BAD_001",
+      "device_id": "REV_MISSING_001",
+      "repair_desc": "bad dependency by reviewer",
+      "operator": "reviewer",
+      "repair_time": "2026-06-15T12:00:00"
+    }
+  ],
+  "approval_records": []
+}

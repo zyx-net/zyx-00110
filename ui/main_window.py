@@ -1421,7 +1421,7 @@ class DeviceInspectionApp:
         ttk.Button(filter_frame, text="查看失败会话", command=self.show_failed_sessions).pack(side=tk.LEFT, padx=5)
 
         self.session_center_tree = ttk.Treeview(self.session_center_frame, 
-            columns=("会话ID", "文件", "操作人", "状态", "创建时间", "结束时间", "事件数", "错误数"), 
+            columns=("会话ID", "文件", "操作人", "状态", "创建时间", "结束时间", "事件数", "错误数", "可撤销"), 
             show="headings", height=15)
         self.session_center_tree.heading("会话ID", text="会话ID")
         self.session_center_tree.heading("文件", text="文件")
@@ -1431,6 +1431,7 @@ class DeviceInspectionApp:
         self.session_center_tree.heading("结束时间", text="结束时间")
         self.session_center_tree.heading("事件数", text="事件数")
         self.session_center_tree.heading("错误数", text="错误数")
+        self.session_center_tree.heading("可撤销", text="可撤销")
 
         self.session_center_tree.column("会话ID", width=150)
         self.session_center_tree.column("文件", width=200)
@@ -1440,6 +1441,7 @@ class DeviceInspectionApp:
         self.session_center_tree.column("结束时间", width=150)
         self.session_center_tree.column("事件数", width=60)
         self.session_center_tree.column("错误数", width=60)
+        self.session_center_tree.column("可撤销", width=60)
 
         self.session_center_tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         self.session_center_tree.bind("<Double-Button-1>", self.on_session_center_double_click)
@@ -1453,6 +1455,8 @@ class DeviceInspectionApp:
         ttk.Button(action_frame, text="校验文件完整性", command=self.verify_file_integrity_gui).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="权限管理", command=self.manage_session_permissions).pack(side=tk.LEFT, padx=5)
         ttk.Button(action_frame, text="重新校验", command=self.revalidate_session_gui).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="撤销导入", command=self.undo_session_from_center).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="删除会话", command=self.delete_session_from_center).pack(side=tk.LEFT, padx=5)
 
         self.query_session_history()
 
@@ -1461,7 +1465,10 @@ class DeviceInspectionApp:
             self.session_center_tree.delete(item)
 
         operator = self.center_operator_entry.get().strip() or None
-        sessions = self.session_manager.get_session_history(operator=operator)
+        
+        sessions = self.session_manager.get_user_sessions(self.current_user, self.is_supervisor)
+        if operator:
+            sessions = [s for s in sessions if s.operator == operator]
 
         status_filter = self.center_status_filter.get()
         status_map = {
@@ -1488,10 +1495,11 @@ class DeviceInspectionApp:
             }.get(session.status, session.status)
 
             file_name = os.path.basename(session.file_path) if session.file_path else "-"
-            created_time = session.created_time.split("T")[1][:8] if session.created_time else "-"
-            end_time = session.end_time.split("T")[1][:8] if session.end_time else "-"
+            created_time = session.created_time.split("T")[0] + " " + session.created_time.split("T")[1][:8] if session.created_time else "-"
+            end_time = session.end_time.split("T")[0] + " " + session.end_time.split("T")[1][:8] if session.end_time else "-"
             event_count = len(session.events)
             error_count = len(session.error_snapshots)
+            can_undo = "是" if session.can_undo else "否"
 
             self.session_center_tree.insert("", tk.END, values=(
                 session.session_id,
@@ -1501,11 +1509,12 @@ class DeviceInspectionApp:
                 created_time,
                 end_time,
                 event_count,
-                error_count
+                error_count,
+                can_undo
             ))
 
     def show_failed_sessions(self):
-        failed_sessions = self.session_manager.get_failed_sessions()
+        failed_sessions = self.session_manager.get_failed_sessions_for_user(self.current_user, self.is_supervisor)
         if not failed_sessions:
             messagebox.showinfo("提示", "没有失败的会话")
             return
@@ -1516,10 +1525,11 @@ class DeviceInspectionApp:
         for session in failed_sessions:
             status_text = "失败"
             file_name = os.path.basename(session.file_path) if session.file_path else "-"
-            created_time = session.created_time.split("T")[1][:8] if session.created_time else "-"
-            end_time = session.end_time.split("T")[1][:8] if session.end_time else "-"
+            created_time = session.created_time.split("T")[0] + " " + session.created_time.split("T")[1][:8] if session.created_time else "-"
+            end_time = session.end_time.split("T")[0] + " " + session.end_time.split("T")[1][:8] if session.end_time else "-"
             event_count = len(session.events)
             error_count = len(session.error_snapshots)
+            can_undo = "是" if session.can_undo else "否"
 
             self.session_center_tree.insert("", tk.END, values=(
                 session.session_id,
@@ -1529,7 +1539,8 @@ class DeviceInspectionApp:
                 created_time,
                 end_time,
                 event_count,
-                error_count
+                error_count,
+                can_undo
             ))
 
     def on_session_center_double_click(self, event):
@@ -1775,6 +1786,56 @@ class DeviceInspectionApp:
         else:
             error_msg = "\n".join([f"- {e}" for e in errors])
             messagebox.showwarning("校验失败", f"发现以下问题:\n{error_msg}")
+
+    def undo_session_from_center(self):
+        selected = self.session_center_tree.selection()
+        if not selected:
+            messagebox.showwarning("提示", "请先选择一个会话")
+            return
+
+        session_id = self.session_center_tree.item(selected[0])['values'][0]
+        session = self.session_manager.get_session(session_id)
+
+        if not session:
+            messagebox.showerror("错误", "会话不存在")
+            return
+
+        if not session.can_undo:
+            messagebox.showwarning("提示", "此会话不支持撤销")
+            return
+
+        if not messagebox.askyesno("确认撤销", f"确定要撤销会话 {session_id} 的导入吗？\n数据将恢复到导入前的状态。"):
+            return
+
+        success, msg = self.session_manager.undo_import(session, self.current_user, self.is_supervisor)
+        if success:
+            messagebox.showinfo("撤销成功", msg)
+            self.service.devices = self.service.storage.load_devices()
+            self.service.repair_records = self.service.storage.load_repair_records()
+            self.service.approval_records = self.service.storage.load_approval_records()
+            self.refresh_device_list()
+            self.refresh_log()
+            self.query_session_history()
+        else:
+            messagebox.showerror("撤销失败", msg)
+
+    def delete_session_from_center(self):
+        selected = self.session_center_tree.selection()
+        if not selected:
+            messagebox.showwarning("提示", "请先选择一个会话")
+            return
+
+        session_id = self.session_center_tree.item(selected[0])['values'][0]
+
+        if not messagebox.askyesno("确认删除", f"确定要删除会话 {session_id} 吗？\n此操作不可恢复。"):
+            return
+
+        success, msg = self.session_manager.delete_session(session_id, self.current_user, self.is_supervisor)
+        if success:
+            messagebox.showinfo("删除成功", msg)
+            self.query_session_history()
+        else:
+            messagebox.showerror("删除失败", msg)
 
 
 if __name__ == "__main__":

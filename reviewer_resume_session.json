@@ -1,0 +1,14 @@
+{
+  "devices": [
+    {
+      "device_id": "REV_RESUME_001",
+      "name": "Reviewer Resume Device",
+      "status": "正常",
+      "abnormal_desc": "",
+      "create_time": "2026-06-15T12:20:00",
+      "update_time": "2026-06-15T12:20:00"
+    }
+  ],
+  "repair_records": [],
+  "approval_records": []
+}

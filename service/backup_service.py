@@ -21,6 +21,12 @@ class BackupService:
         backup_name = f"backup_{timestamp}_{import_log_id}"
         backup_path = os.path.join(self.backup_dir, backup_name)
         
+        counter = 1
+        while os.path.exists(backup_path):
+            backup_name = f"backup_{timestamp}_{import_log_id}_{counter}"
+            backup_path = os.path.join(self.backup_dir, backup_name)
+            counter += 1
+        
         try:
             shutil.copytree(self.data_dir, backup_path, ignore=shutil.ignore_patterns('backups', '*.bak'))
             

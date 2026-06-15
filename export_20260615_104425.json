@@ -1,0 +1,23 @@
+{
+  "devices": [
+    {
+      "device_id": "ROLL001",
+      "name": "Rollback Test Device 1",
+      "status": "正常",
+      "abnormal_desc": "",
+      "create_time": "2026-06-15T10:44:25.987052",
+      "update_time": "2026-06-15T10:44:25.987057"
+    },
+    {
+      "device_id": "ROLL002",
+      "name": "Rollback Test Device 2",
+      "status": "正常",
+      "abnormal_desc": "",
+      "create_time": "2026-06-15T10:44:25.987572",
+      "update_time": "2026-06-15T10:44:25.987577"
+    }
+  ],
+  "repair_records": [],
+  "approval_records": [],
+  "export_time": "2026-06-15T10:44:25.988161"
+}

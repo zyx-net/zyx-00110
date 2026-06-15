@@ -286,3 +286,19 @@ class JSONStorage:
         if not session.has_error_snapshots():
             return False, "会话没有错误快照"
         return self.export_session_snapshot(session, file_path)
+    
+    def get_sessions_by_operator(self, operator):
+        sessions = self.load_all_sessions()
+        return [s for s in sessions if s.operator == operator]
+    
+    def get_sessions_with_errors(self):
+        sessions = self.load_all_sessions()
+        return [s for s in sessions if s.has_error_snapshots()]
+    
+    def get_completed_sessions(self):
+        sessions = self.load_all_sessions()
+        return [s for s in sessions if s.status == ImportSession.STATUS_COMPLETED]
+    
+    def get_undoable_sessions(self):
+        sessions = self.load_all_sessions()
+        return [s for s in sessions if s.committed and s.can_undo]

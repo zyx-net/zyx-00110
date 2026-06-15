@@ -14,6 +14,12 @@ class ImportSessionManager:
         self.storage = storage or JSONStorage()
         self.backup_service = BackupService(self.storage)
         self.device_service = device_service
+    
+    def get_all_sessions(self):
+        return self.storage.load_all_sessions()
+    
+    def get_sessions_by_status(self, status):
+        return self.storage.get_sessions_by_status(status)
 
     def _get_current_devices(self):
         if self.device_service:
@@ -258,21 +264,32 @@ class ImportSessionManager:
 
     def validate_dependencies(self, session):
         errors = []
-        imported_device_ids = set(d['device_id'] for d in session.raw_data.get('devices', []))
+        
+        imported_device_ids = set()
+        for d in session.raw_data.get('devices', []):
+            device_id = getattr(d, 'device_id', None) or (d.get('device_id') if hasattr(d, 'get') else None)
+            if device_id:
+                imported_device_ids.add(device_id)
 
         for record in session.raw_data.get('repair_records', []):
-            if record.get('device_id') and record['device_id'] not in imported_device_ids:
+            record_id = getattr(record, 'record_id', None) or (record.get('record_id') if hasattr(record, 'get') else None)
+            device_id = getattr(record, 'device_id', None) or (record.get('device_id') if hasattr(record, 'get') else None)
+            
+            if device_id and device_id not in imported_device_ids:
                 current_devices = self._get_current_devices()
                 current_device_ids = {d.device_id for d in current_devices}
-                if record['device_id'] not in current_device_ids:
-                    errors.append(f"维修记录 {record.get('record_id', '未知')} 关联的设备 {record['device_id']} 不存在")
+                if device_id not in current_device_ids:
+                    errors.append(f"维修记录 {record_id or '未知'} 关联的设备 {device_id} 不存在")
 
         for record in session.raw_data.get('approval_records', []):
-            if record.get('device_id') and record['device_id'] not in imported_device_ids:
+            record_id = getattr(record, 'record_id', None) or (record.get('record_id') if hasattr(record, 'get') else None)
+            device_id = getattr(record, 'device_id', None) or (record.get('device_id') if hasattr(record, 'get') else None)
+            
+            if device_id and device_id not in imported_device_ids:
                 current_devices = self._get_current_devices()
                 current_device_ids = {d.device_id for d in current_devices}
-                if record['device_id'] not in current_device_ids:
-                    errors.append(f"审批记录 {record.get('record_id', '未知')} 关联的设备 {record['device_id']} 不存在")
+                if device_id not in current_device_ids:
+                    errors.append(f"审批记录 {record_id or '未知'} 关联的设备 {device_id} 不存在")
 
         return errors
 
@@ -280,34 +297,48 @@ class ImportSessionManager:
         errors = []
 
         for device in session.raw_data.get('devices', []):
-            if not device.get('device_id'):
+            device_id = getattr(device, 'device_id', None) or (device.get('device_id') if hasattr(device, 'get') else None)
+            name = getattr(device, 'name', None) or (device.get('name') if hasattr(device, 'get') else None)
+            status = getattr(device, 'status', None) or (device.get('status') if hasattr(device, 'get') else None)
+            
+            if not device_id:
                 errors.append(f"设备: 设备ID缺失")
-            if not device.get('name'):
-                errors.append(f"设备 {device.get('device_id', '未知')}: 名称缺失")
-            if not device.get('status'):
-                errors.append(f"设备 {device.get('device_id', '未知')}: 状态缺失")
-            elif device['status'] not in DeviceStatus.values():
-                errors.append(f"设备 {device.get('device_id', '未知')}: 状态值 '{device['status']}' 不合法")
+            if not name:
+                errors.append(f"设备 {device_id or '未知'}: 名称缺失")
+            if not status:
+                errors.append(f"设备 {device_id or '未知'}: 状态缺失")
+            elif status not in DeviceStatus.values():
+                errors.append(f"设备 {device_id or '未知'}: 状态值 '{status}' 不合法")
 
         for record in session.raw_data.get('repair_records', []):
-            if not record.get('record_id'):
+            record_id = getattr(record, 'record_id', None) or (record.get('record_id') if hasattr(record, 'get') else None)
+            device_id = getattr(record, 'device_id', None) or (record.get('device_id') if hasattr(record, 'get') else None)
+            repair_desc = getattr(record, 'repair_desc', None) or (record.get('repair_desc') if hasattr(record, 'get') else None)
+            operator = getattr(record, 'operator', None) or (record.get('operator') if hasattr(record, 'get') else None)
+            
+            if not record_id:
                 errors.append(f"维修记录: 记录ID缺失")
-            if not record.get('device_id'):
-                errors.append(f"维修记录 {record.get('record_id', '未知')}: 设备ID缺失")
-            if not record.get('repair_desc'):
-                errors.append(f"维修记录 {record.get('record_id', '未知')}: 维修内容缺失")
-            if not record.get('operator'):
-                errors.append(f"维修记录 {record.get('record_id', '未知')}: 维修人员缺失")
+            if not device_id:
+                errors.append(f"维修记录 {record_id or '未知'}: 设备ID缺失")
+            if not repair_desc:
+                errors.append(f"维修记录 {record_id or '未知'}: 维修内容缺失")
+            if not operator:
+                errors.append(f"维修记录 {record_id or '未知'}: 维修人员缺失")
 
         for record in session.raw_data.get('approval_records', []):
-            if not record.get('record_id'):
+            record_id = getattr(record, 'record_id', None) or (record.get('record_id') if hasattr(record, 'get') else None)
+            device_id = getattr(record, 'device_id', None) or (record.get('device_id') if hasattr(record, 'get') else None)
+            approval_type = getattr(record, 'approval_type', None) or (record.get('approval_type') if hasattr(record, 'get') else None)
+            approver = getattr(record, 'approver', None) or (record.get('approver') if hasattr(record, 'get') else None)
+            
+            if not record_id:
                 errors.append(f"审批记录: 记录ID缺失")
-            if not record.get('device_id'):
-                errors.append(f"审批记录 {record.get('record_id', '未知')}: 设备ID缺失")
-            if not record.get('approval_type'):
-                errors.append(f"审批记录 {record.get('record_id', '未知')}: 审批类型缺失")
-            if not record.get('approver'):
-                errors.append(f"审批记录 {record.get('record_id', '未知')}: 审批人缺失")
+            if not device_id:
+                errors.append(f"审批记录 {record_id or '未知'}: 设备ID缺失")
+            if not approval_type:
+                errors.append(f"审批记录 {record_id or '未知'}: 审批类型缺失")
+            if not approver:
+                errors.append(f"审批记录 {record_id or '未知'}: 审批人缺失")
 
         return errors
 
@@ -756,3 +787,84 @@ class ImportSessionManager:
         
         self.storage.save_session(session)
         return len(all_errors) == 0, all_errors
+    
+    def get_user_sessions(self, user, is_supervisor=False):
+        all_sessions = self.storage.load_all_sessions()
+        visible_sessions = []
+        for session in all_sessions:
+            if session.check_permission(user, SessionPermission.PERM_VIEW, is_supervisor):
+                visible_sessions.append(session)
+        return sorted(visible_sessions, key=lambda x: x.created_time, reverse=True)
+    
+    def get_failed_sessions_for_user(self, user, is_supervisor=False):
+        all_sessions = self.storage.get_failed_sessions()
+        visible_sessions = []
+        for session in all_sessions:
+            if session.check_permission(user, SessionPermission.PERM_VIEW, is_supervisor):
+                visible_sessions.append(session)
+        return sorted(visible_sessions, key=lambda x: x.created_time, reverse=True)
+    
+    def export_failed_session_snapshot(self, session_id, file_path, user, is_supervisor=False):
+        session = self.storage.get_session(session_id)
+        if not session:
+            return False, "会话不存在"
+        
+        if not session.check_permission(user, SessionPermission.PERM_EXPORT, is_supervisor):
+            return False, "没有权限导出此会话"
+        
+        if not session.has_error_snapshots():
+            return False, "会话没有错误快照"
+        
+        return self.storage.export_session_snapshot(session, file_path)
+    
+    def delete_session(self, session_id, user, is_supervisor=False):
+        session = self.storage.get_session(session_id)
+        if not session:
+            return False, "会话不存在"
+        
+        if session.committed and session.can_undo:
+            return False, "已提交且可撤销的会话不能删除，请先撤销"
+        
+        if not session.check_permission(user, SessionPermission.PERM_UNDO, is_supervisor):
+            return False, "没有权限删除此会话"
+        
+        success = self.storage.delete_session(session_id)
+        if success:
+            return True, "会话已删除"
+        return False, "删除失败"
+    
+    def get_session_summary(self, session_id, user, is_supervisor=False):
+        session = self.storage.get_session(session_id)
+        if not session:
+            return None, "会话不存在"
+        
+        if not session.check_permission(user, SessionPermission.PERM_VIEW, is_supervisor):
+            return None, "没有权限查看此会话"
+        
+        summary = {
+            "session_id": session.session_id,
+            "file_path": session.file_path,
+            "file_type": session.file_type,
+            "operator": session.operator,
+            "is_supervisor": session.is_supervisor,
+            "status": session.status,
+            "created_time": session.created_time,
+            "updated_time": session.updated_time,
+            "end_time": session.end_time,
+            "committed": session.committed,
+            "can_undo": session.can_undo,
+            "result_message": session.result_message,
+            "has_errors": session.has_error_snapshots(),
+            "error_count": len(session.error_snapshots),
+            "event_count": len(session.events),
+            "conflict_count": session.get_unresolved_conflicts_count() if session.preview_result else 0
+        }
+        
+        if session.preview_result:
+            summary["preview_summary"] = {
+                "devices": {k: len(v) for k, v in session.preview_result.devices.items()},
+                "repair_records": {k: len(v) for k, v in session.preview_result.repair_records.items()},
+                "approval_records": {k: len(v) for k, v in session.preview_result.approval_records.items()}
+            }
+        
+        return summary, None
