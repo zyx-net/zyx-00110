@@ -1,22 +1,22 @@
 {
   "session_info": {
-    "session_id": "SESSION_20260615112432_31400fc11f69",
+    "session_id": "SESSION_20260615115651_3e2e2611c263",
     "file_path": ".\\fail_export_test.json",
     "file_type": "json",
     "operator": "UserA",
     "is_supervisor": true,
-    "created_time": "2026-06-15T11:24:32.282549",
-    "updated_time": "2026-06-15T11:24:32.283494",
-    "status": "in_progress",
+    "created_time": "2026-06-15T11:56:51.944238",
+    "updated_time": "2026-06-15T11:56:51.945232",
+    "status": "failed",
     "committed": false,
     "commit_time": null,
-    "result_message": "",
+    "result_message": "依赖关系校验失败:\n- 维修记录 REP001 关联的设备 NONEXISTENT 不存在",
     "can_undo": false
   },
   "event_chain": [
     {
       "event_type": "session_created",
-      "event_time": "2026-06-15T11:24:32.282631",
+      "event_time": "2026-06-15T11:56:51.944323",
       "operator": "UserA",
       "details": {
         "file_path": ".\\fail_export_test.json",
@@ -26,7 +26,7 @@
     },
     {
       "event_type": "preview_generated",
-      "event_time": "2026-06-15T11:24:32.282638",
+      "event_time": "2026-06-15T11:56:51.944331",
       "operator": "UserA",
       "details": {
         "total_new": 1,
@@ -37,30 +37,30 @@
     },
     {
       "event_type": "commit_started",
-      "event_time": "2026-06-15T11:24:32.283378",
+      "event_time": "2026-06-15T11:56:51.945113",
       "operator": "UserA",
       "details": {}
     },
     {
       "event_type": "validation_started",
-      "event_time": "2026-06-15T11:24:32.283466",
+      "event_time": "2026-06-15T11:56:51.945204",
       "operator": "UserA",
       "details": {}
     },
     {
-      "event_type": "validation_failed",
-      "event_time": "2026-06-15T11:24:32.283491",
+      "event_type": "commit_failed",
+      "event_time": "2026-06-15T11:56:51.945230",
       "operator": "UserA",
       "details": {
-        "error_count": 1
+        "error": "依赖关系校验失败:\n- 维修记录 REP001 关联的设备 NONEXISTENT 不存在"
       }
     }
   ],
   "error_snapshots": [
     {
       "error_type": "dependency_validation_failed",
-      "error_message": "依赖关系校验失败: 维修记录 REP001 关联的设备 NONEXISTENT 不存在",
-      "error_time": "2026-06-15T11:24:32.283483",
+      "error_message": "依赖关系校验失败:\n- 维修记录 REP001 关联的设备 NONEXISTENT 不存在",
+      "error_time": "2026-06-15T11:56:51.945226",
       "context": {
         "errors": [
           "维修记录 REP001 关联的设备 NONEXISTENT 不存在"
@@ -90,7 +90,7 @@
       "invalid": 0
     }
   },
-  "export_time": "2026-06-15T11:24:32.285359",
+  "export_time": "2026-06-15T11:56:51.947652",
   "raw_data": {
     "devices": [
       {
@@ -98,8 +98,8 @@
         "name": "Fail Device",
         "status": "正常",
         "abnormal_desc": "",
-        "create_time": "2026-06-15T11:24:32.282437",
-        "update_time": "2026-06-15T11:24:32.282442"
+        "create_time": "2026-06-15T11:56:51.944122",
+        "update_time": "2026-06-15T11:56:51.944127"
       }
     ],
     "repair_records": [
@@ -108,7 +108,7 @@
         "device_id": "NONEXISTENT",
         "repair_desc": "Test",
         "operator": "Zhang San",
-        "repair_time": "2026-06-15T11:24:32.282450"
+        "repair_time": "2026-06-15T11:56:51.944133"
       }
     ],
     "approval_records": []

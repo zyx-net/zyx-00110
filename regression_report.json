@@ -1,0 +1,24 @@
+{
+  "run_time": "2026-06-15T11:56:52.041462",
+  "duration_seconds": 0.956223,
+  "all_passed": true,
+  "total_tests": 2,
+  "passed_tests": 2,
+  "failed_tests": 0,
+  "results": [
+    {
+      "test_name": "failed_session_tests",
+      "success": true,
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": "test_export_failed_session_detailed (test_failed_session.TestFailedSession.test_export_failed_session_detailed) ... ok\ntest_export_failed_session_report (test_failed_session.TestFailedSession.test_export_failed_session_report) ... ok\ntest_failed_import_log_created (test_failed_session.TestFailedSession.test_failed_import_log_created) ... ok\ntest_failed_session_count (test_failed_session.TestFailedSession.test_failed_session_count) ... ok\ntest_failed_session_filter_by_error_type (test_failed_session.TestFailedSession.test_failed_session_filter_by_error_type) ... ok\ntest_failed_session_filter_by_operator (test_failed_session.TestFailedSession.test_failed_session_filter_by_operator) ... ok\ntest_failed_session_in_list (test_failed_session.TestFailedSession.test_failed_session_in_list) ... ok\ntest_failed_session_status_transition (test_failed_session.TestFailedSession.test_failed_session_status_transition) ... ok\n\n----------------------------------------------------------------------\nRan 8 tests in 0.076s\n\nOK\n"
+    },
+    {
+      "test_name": "test_regression",
+      "success": true,
+      "exit_code": 0,
+      "stdout": null,
+      "stderr": ""
+    }
+  ]
+}

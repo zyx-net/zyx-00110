@@ -1,6 +1,7 @@
 import os
 import hashlib
 import traceback
+import json
 from datetime import datetime
 from model.device import ImportSession, SessionPreviewResult, ConflictDecision, SessionImportLog
 from model.device import Device, RepairRecord, ApprovalRecord, SessionEventType, SessionPermission
@@ -342,68 +343,107 @@ class ImportSessionManager:
 
         return errors
 
+    def _mark_session_failed(self, session, error_type, error_message, context=None, stack_trace=None):
+        session.status = ImportSession.STATUS_FAILED
+        session.end_time = datetime.now().isoformat()
+        session.result_message = error_message
+        session.add_error_snapshot(error_type, error_message, context, stack_trace)
+        session.add_event(SessionEventType.COMMIT_FAILED, session.commit_operator or session.operator, {"error": error_message})
+        self.storage.save_session(session)
+
+    def _create_failed_import_log(self, session, operator, is_supervisor, error_type, error_message):
+        log_id = f"IMP_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        error_log = SessionImportLog(
+            log_id=log_id,
+            session_id=session.session_id,
+            import_time=datetime.now().isoformat(),
+            operator=operator,
+            is_supervisor=is_supervisor,
+            total_rows=session.preview_result.get_total("devices") + 
+                       session.preview_result.get_total("repair_records") + 
+                       session.preview_result.get_total("approval_records") if session.preview_result else 0,
+            new_rows=0,
+            overwrite_rows=0,
+            skipped_rows=0,
+            conflict_resolved=len(session.conflict_resolutions),
+            status="failed",
+            message=error_message,
+            details={
+                'error_type': error_type,
+                'error_message': error_message,
+                'conflict_decisions': [self._format_conflict_decision(r) for r in session.conflict_resolutions],
+                'snapshot_count': len(session.error_snapshots),
+                'preview_summary': session.preview_result.to_dict() if session.preview_result else None
+            }
+        )
+        self.storage.save_session_import_log(error_log)
+        return log_id
+
     def commit_import(self, session, operator, is_supervisor):
         session = self.storage.get_session(session.session_id)
         if not session:
             return False, "会话不存在"
 
-        if not is_supervisor:
-            session.add_error_snapshot("permission_denied", "权限不足：只有主管才能执行导入操作", {"operator": operator})
-            self.storage.save_session(session)
-            return False, "权限不足：只有主管才能执行导入操作"
-
+        session.commit_operator = operator
         session.add_event(SessionEventType.COMMIT_STARTED, operator)
 
+        if not is_supervisor:
+            self._mark_session_failed(session, "permission_denied", "权限不足：只有主管才能执行导入操作", {"operator": operator})
+            self._create_failed_import_log(session, operator, is_supervisor, "permission_denied", "权限不足：只有主管才能执行导入操作")
+            return False, "权限不足：只有主管才能执行导入操作"
+
         if operator != session.operator and not is_supervisor:
-            session.add_error_snapshot("operator_mismatch", f"操作人不匹配，只有创建会话的主管或当前主管可以提交", {"operator": operator, "session_operator": session.operator})
-            self.storage.save_session(session)
+            self._mark_session_failed(session, "operator_mismatch", f"操作人不匹配，只有创建会话的主管或当前主管可以提交", {"operator": operator, "session_operator": session.operator})
+            self._create_failed_import_log(session, operator, is_supervisor, "operator_mismatch", f"操作人不匹配，只有创建会话的主管或当前主管可以提交")
             return False, "操作人不匹配，只有创建会话的主管或当前主管可以提交"
 
         if not session.is_all_conflicts_resolved():
             unresolved = session.get_unresolved_conflicts_count()
-            session.add_error_snapshot("unresolved_conflicts", f"还有 {unresolved} 个冲突项未决策，不能执行导入", {"unresolved_count": unresolved})
-            self.storage.save_session(session)
+            self._mark_session_failed(session, "unresolved_conflicts", f"还有 {unresolved} 个冲突项未决策，不能执行导入", {"unresolved_count": unresolved})
+            self._create_failed_import_log(session, operator, is_supervisor, "unresolved_conflicts", f"还有 {unresolved} 个冲突项未决策，不能执行导入")
             return False, f"还有 {unresolved} 个冲突项未决策，不能执行导入"
 
         current_checksum = self._calculate_file_checksum(session.file_path)
         if current_checksum != session.file_checksum:
-            session.add_error_snapshot("file_modified", "文件已被修改，不能执行导入", {"original_checksum": session.file_checksum, "current_checksum": current_checksum})
-            self.storage.save_session(session)
+            self._mark_session_failed(session, "file_modified", "文件已被修改，不能执行导入", {"original_checksum": session.file_checksum, "current_checksum": current_checksum})
+            self._create_failed_import_log(session, operator, is_supervisor, "file_modified", "文件已被修改，不能执行导入")
             return False, "文件已被修改，不能执行导入。请重新预览文件"
 
         session.add_event(SessionEventType.VALIDATION_STARTED, operator)
 
         dependency_errors = self.validate_dependencies(session)
         if dependency_errors:
-            session.add_error_snapshot("dependency_validation_failed", f"依赖关系校验失败: {', '.join(dependency_errors)}", {"errors": dependency_errors})
-            session.add_event(SessionEventType.VALIDATION_FAILED, operator, {"error_count": len(dependency_errors)})
-            self.storage.save_session(session)
-            return False, f"依赖关系校验失败:\n" + "\n".join(f"- {e}" for e in dependency_errors)
+            error_msg = f"依赖关系校验失败:\n" + "\n".join(f"- {e}" for e in dependency_errors)
+            self._mark_session_failed(session, "dependency_validation_failed", error_msg, {"errors": dependency_errors})
+            self._create_failed_import_log(session, operator, is_supervisor, "dependency_validation_failed", error_msg)
+            return False, error_msg
 
         required_field_errors = self.validate_required_fields(session)
         if required_field_errors:
-            session.add_error_snapshot("required_field_validation_failed", f"必填字段校验失败: {', '.join(required_field_errors)}", {"errors": required_field_errors})
-            session.add_event(SessionEventType.VALIDATION_FAILED, operator, {"error_count": len(required_field_errors)})
-            self.storage.save_session(session)
-            return False, f"必填字段校验失败:\n" + "\n".join(f"- {e}" for e in required_field_errors)
+            error_msg = f"必填字段校验失败:\n" + "\n".join(f"- {e}" for e in required_field_errors)
+            self._mark_session_failed(session, "required_field_validation_failed", error_msg, {"errors": required_field_errors})
+            self._create_failed_import_log(session, operator, is_supervisor, "required_field_validation_failed", error_msg)
+            return False, error_msg
 
         from service.device_service import SUPERVISORS
         for record in session.raw_data.get('approval_records', []):
             if record.get('approval_type') == '复机':
                 approver = record.get('approver', '')
                 if approver not in SUPERVISORS:
-                    session.add_error_snapshot("unauthorized_approval", f"审批人 '{approver}' 无复机审批权限", {"approver": approver, "record_id": record.get('record_id')})
-                    self.storage.save_session(session)
-                    return False, f"审批人 '{approver}' 无复机审批权限"
+                    error_msg = f"审批人 '{approver}' 无复机审批权限"
+                    self._mark_session_failed(session, "unauthorized_approval", error_msg, {"approver": approver, "record_id": record.get('record_id')})
+                    self._create_failed_import_log(session, operator, is_supervisor, "unauthorized_approval", error_msg)
+                    return False, error_msg
 
         session.add_event(SessionEventType.VALIDATION_PASSED, operator)
 
         log_id = f"IMP_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         success, backup_path, backup_info = self.backup_service.create_backup(log_id)
         if not success:
-            session.add_error_snapshot("backup_failed", f"创建备份失败: {backup_info}")
-            self.storage.save_session(session)
-            return False, f"创建备份失败: {backup_info}"
+            error_msg = f"创建备份失败: {backup_info}"
+            self._mark_session_failed(session, "backup_failed", error_msg)
+            self._create_failed_import_log(session, operator, is_supervisor, "backup_failed", error_msg)
+            return False, error_msg
 
         session.backup_path = backup_path
 
@@ -502,7 +542,6 @@ class ImportSessionManager:
             session.status = ImportSession.STATUS_COMPLETED
             session.committed = True
             session.commit_time = datetime.now().isoformat()
-            session.commit_operator = operator
             session.can_undo = True
             session.end_time = datetime.now().isoformat()
             session.result_message = self._generate_result_message(stats)
@@ -548,40 +587,10 @@ class ImportSessionManager:
             return True, f"导入成功！\n备份位置: {backup_path}\n{session.result_message}"
 
         except Exception as e:
-            session.status = ImportSession.STATUS_FAILED
-            session.end_time = datetime.now().isoformat()
-            session.result_message = f"导入失败: {str(e)}"
-            
-            session.add_error_snapshot(
-                error_type=type(e).__name__,
-                error_message=str(e),
-                context={"operator": operator, "is_supervisor": is_supervisor},
-                stack_trace=traceback.format_exc()
-            )
-            session.add_event(SessionEventType.COMMIT_FAILED, operator, {"error": str(e)})
-            
-            self.storage.save_session(session)
-
-            error_log = SessionImportLog(
-                log_id=log_id,
-                session_id=session.session_id,
-                import_time=datetime.now().isoformat(),
-                operator=operator,
-                is_supervisor=is_supervisor,
-                total_rows=0,
-                new_rows=0,
-                overwrite_rows=0,
-                skipped_rows=0,
-                conflict_resolved=0,
-                status="failed",
-                message=str(e),
-                details={
-                    'error_type': type(e).__name__,
-                    'error_message': str(e)
-                }
-            )
-            self.storage.save_session_import_log(error_log)
-
+            self._mark_session_failed(session, type(e).__name__, f"导入失败: {str(e)}", 
+                                      {"operator": operator, "is_supervisor": is_supervisor},
+                                      traceback.format_exc())
+            self._create_failed_import_log(session, operator, is_supervisor, type(e).__name__, str(e))
             return False, f"导入过程中发生错误: {str(e)}"
 
     def _format_conflict_decision(self, resolution):
@@ -713,6 +722,48 @@ class ImportSessionManager:
 
     def get_failed_session_snapshot(self, session_id, file_path):
         return self.storage.export_failed_session_snapshot(session_id, file_path)
+
+    def get_failed_sessions_with_filter(self, operator=None, error_type=None, start_time=None, end_time=None):
+        failed_sessions = self.storage.get_failed_sessions()
+        
+        if operator:
+            failed_sessions = [s for s in failed_sessions if s.operator == operator]
+        
+        if error_type:
+            failed_sessions = [s for s in failed_sessions if any(snapshot.error_type == error_type for snapshot in s.error_snapshots)]
+        
+        if start_time:
+            failed_sessions = [s for s in failed_sessions if s.created_time >= start_time]
+        
+        if end_time:
+            failed_sessions = [s for s in failed_sessions if s.created_time <= end_time]
+        
+        return sorted(failed_sessions, key=lambda x: x.created_time, reverse=True)
+
+    def get_failed_session_count(self, operator=None, error_type=None):
+        failed_sessions = self.get_failed_sessions_with_filter(operator=operator, error_type=error_type)
+        return len(failed_sessions)
+
+    def get_sessions_by_status(self, status, operator=None):
+        sessions = self.storage.get_sessions_by_status(status)
+        if operator:
+            sessions = [s for s in sessions if s.operator == operator]
+        return sorted(sessions, key=lambda x: x.created_time, reverse=True)
+
+    def get_sessions_with_errors(self):
+        return self.storage.get_sessions_with_errors()
+
+    def get_failed_import_logs(self, session_id=None, operator=None):
+        logs = self.storage.load_session_import_logs()
+        failed_logs = [log for log in logs if log.status == "failed"]
+        
+        if session_id:
+            failed_logs = [log for log in failed_logs if log.session_id == session_id]
+        
+        if operator:
+            failed_logs = [log for log in failed_logs if log.operator == operator]
+        
+        return sorted(failed_logs, key=lambda x: x.import_time, reverse=True)
 
     def get_session_event_chain(self, session_id, operator=None, is_supervisor=False):
         session = self.storage.get_session(session_id)
@@ -868,3 +919,102 @@ class ImportSessionManager:
             }
         
         return summary, None
+
+    def export_failed_sessions_report(self, output_path, user, is_supervisor=False, filter_params=None):
+        filter_params = filter_params or {}
+        failed_sessions = self.get_failed_sessions_with_filter(**filter_params)
+        
+        visible_sessions = []
+        for session in failed_sessions:
+            if session.check_permission(user, SessionPermission.PERM_VIEW, is_supervisor):
+                visible_sessions.append(session)
+        
+        report = {
+            "report_generated_time": datetime.now().isoformat(),
+            "filter_params": filter_params,
+            "total_failed_sessions": len(visible_sessions),
+            "sessions": []
+        }
+        
+        for session in visible_sessions:
+            session_data = {
+                "session_id": session.session_id,
+                "file_path": session.file_path,
+                "file_type": session.file_type,
+                "operator": session.operator,
+                "created_time": session.created_time,
+                "end_time": session.end_time,
+                "status": session.status,
+                "result_message": session.result_message,
+                "conflict_resolutions": [self._format_conflict_decision(r) for r in session.conflict_resolutions],
+                "error_snapshots": [snapshot.to_dict() for snapshot in session.error_snapshots],
+                "events": [event.to_dict() for event in session.events],
+                "preview_summary": None,
+                "raw_data_sample": None
+            }
+            
+            if session.preview_result:
+                session_data["preview_summary"] = {
+                    "devices": {k: len(v) for k, v in session.preview_result.devices.items()},
+                    "repair_records": {k: len(v) for k, v in session.preview_result.repair_records.items()},
+                    "approval_records": {k: len(v) for k, v in session.preview_result.approval_records.items()}
+                }
+            
+            if session.raw_data:
+                session_data["raw_data_sample"] = {
+                    "devices_count": len(session.raw_data.get('devices', [])),
+                    "repair_records_count": len(session.raw_data.get('repair_records', [])),
+                    "approval_records_count": len(session.raw_data.get('approval_records', []))
+                }
+            
+            report["sessions"].append(session_data)
+        
+        try:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(report, f, indent=2, ensure_ascii=False)
+            return True, None
+        except Exception as e:
+            return False, str(e)
+
+    def export_failed_session_detailed(self, session_id, output_path, user, is_supervisor=False):
+        session = self.storage.get_session(session_id)
+        if not session:
+            return False, "会话不存在"
+        
+        if not session.check_permission(user, SessionPermission.PERM_EXPORT, is_supervisor):
+            return False, "没有权限导出此会话"
+        
+        detailed_export = {
+            "export_time": datetime.now().isoformat(),
+            "session_info": {
+                "session_id": session.session_id,
+                "file_path": session.file_path,
+                "file_type": session.file_type,
+                "operator": session.operator,
+                "is_supervisor": session.is_supervisor,
+                "created_time": session.created_time,
+                "updated_time": session.updated_time,
+                "end_time": session.end_time,
+                "status": session.status,
+                "committed": session.committed,
+                "commit_time": session.commit_time,
+                "commit_operator": session.commit_operator,
+                "result_message": session.result_message,
+                "can_undo": session.can_undo,
+                "file_checksum": session.file_checksum,
+                "backup_path": session.backup_path
+            },
+            "event_chain": [event.to_dict() for event in session.events],
+            "error_snapshots": [snapshot.to_dict() for snapshot in session.error_snapshots],
+            "conflict_resolutions": [resolution.to_dict() for resolution in session.conflict_resolutions],
+            "preview_result": session.preview_result.to_dict() if session.preview_result else None,
+            "raw_data": session.raw_data,
+            "permission_info": session.permission.to_dict() if session.permission else None
+        }
+        
+        try:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(detailed_export, f, indent=2, ensure_ascii=False)
+            return True, None
+        except Exception as e:
+            return False, str(e)
