@@ -1,32 +1,44 @@
 [
   {
-    "session_id": "SESSION_20260615055113",
-    "file_path": "export_20260615_055113.json",
+    "session_id": "SESSION_20260615095136_c8f8bac865a9",
+    "file_path": "data\\review_export_perm.json",
     "file_type": "json",
     "operator": "admin",
     "is_supervisor": true,
-    "created_time": "2026-06-15T05:51:13.187822",
-    "updated_time": "2026-06-15T05:51:13.188516",
-    "status": "waiting_confirm",
+    "created_time": "2026-06-15T09:51:36.828026",
+    "updated_time": "2026-06-15T09:51:36.829128",
+    "status": "in_progress",
     "preview_result": {
       "devices": {
         "new": [],
         "overwrite": [],
-        "conflict": [
+        "conflict": [],
+        "invalid": [
           {
             "row_type": "device",
             "row_data": {
-              "device_id": "R002",
-              "name": "Tamper Device",
-              "status": "正常",
+              "device_id": "EXP001",
+              "name": "Export Permission Updated",
+              "status": "??",
               "abnormal_desc": "",
-              "create_time": "2026-06-15T05:51:13.185183",
-              "update_time": "2026-06-15T05:51:13.185188"
+              "create_time": "2026-06-15T09:51:36.827836",
+              "update_time": "2026-06-15T09:51:36.827842"
             },
-            "reason": "设备编号已存在本地记录: R002"
+            "reason": "状态不合法: '??'，有效状态: 正常, 待停机审批, 已停机, 维修中, 待复机审批, 已复机, 复发观察"
+          },
+          {
+            "row_type": "device",
+            "row_data": {
+              "device_id": "EXP002",
+              "name": "Second Device",
+              "status": "??",
+              "abnormal_desc": "",
+              "create_time": "2026-06-15T09:51:36.827849",
+              "update_time": "2026-06-15T09:51:36.827851"
+            },
+            "reason": "状态不合法: '??'，有效状态: 正常, 待停机审批, 已停机, 维修中, 待复机审批, 已复机, 复发观察"
           }
-        ],
-        "invalid": []
+        ]
       },
       "repair_records": {
         "new": [],
@@ -44,39 +56,99 @@
     "raw_data": {
       "devices": [
         {
-          "device_id": "R002",
-          "name": "Tamper Device",
-          "status": "正常",
+          "device_id": "EXP001",
+          "name": "Export Permission Updated",
+          "status": "??",
           "abnormal_desc": "",
-          "create_time": "2026-06-15T05:51:13.185183",
-          "update_time": "2026-06-15T05:51:13.185188"
+          "create_time": "2026-06-15T09:51:36.827836",
+          "update_time": "2026-06-15T09:51:36.827842"
+        },
+        {
+          "device_id": "EXP002",
+          "name": "Second Device",
+          "status": "??",
+          "abnormal_desc": "",
+          "create_time": "2026-06-15T09:51:36.827849",
+          "update_time": "2026-06-15T09:51:36.827851"
         }
       ],
       "repair_records": [],
       "approval_records": []
     },
-    "conflict_resolutions": [
-      {
-        "record_id": "R002",
-        "record_type": "devices",
-        "row_data": {
-          "device_id": "R002",
-          "name": "Tamper Device",
-          "status": "正常",
-          "abnormal_desc": "",
-          "create_time": "2026-06-15T05:51:13.185183",
-          "update_time": "2026-06-15T05:51:13.185188"
-        },
-        "decision": "overwrite_local",
-        "decision_time": "2026-06-15T05:51:13.188513"
-      }
-    ],
-    "file_checksum": "ac491a939818c16003d4ba27957bfd77",
+    "conflict_resolutions": [],
+    "file_checksum": "04a5833021d9c99b9116e20f2e437834",
     "backup_path": null,
     "committed": false,
     "commit_time": null,
     "commit_operator": null,
     "result_message": "",
-    "can_undo": false
+    "can_undo": false,
+    "events": [
+      {
+        "event_type": "session_created",
+        "event_time": "2026-06-15T09:51:36.828159",
+        "operator": "admin",
+        "details": {
+          "file_path": "data\\review_export_perm.json",
+          "file_type": "json",
+          "file_checksum": "04a5833021d9c99b9116e20f2e437834"
+        }
+      },
+      {
+        "event_type": "preview_generated",
+        "event_time": "2026-06-15T09:51:36.828174",
+        "operator": "admin",
+        "details": {
+          "total_new": 0,
+          "total_overwrite": 0,
+          "total_conflict": 0,
+          "total_invalid": 2
+        }
+      },
+      {
+        "event_type": "commit_started",
+        "event_time": "2026-06-15T09:51:36.828988",
+        "operator": "admin",
+        "details": {}
+      },
+      {
+        "event_type": "validation_started",
+        "event_time": "2026-06-15T09:51:36.829084",
+        "operator": "admin",
+        "details": {}
+      },
+      {
+        "event_type": "validation_failed",
+        "event_time": "2026-06-15T09:51:36.829126",
+        "operator": "admin",
+        "details": {
+          "error_count": 2
+        }
+      }
+    ],
+    "error_snapshots": [
+      {
+        "error_type": "required_field_validation_failed",
+        "error_message": "必填字段校验失败: 设备 EXP001: 状态值 '??' 不合法, 设备 EXP002: 状态值 '??' 不合法",
+        "error_time": "2026-06-15T09:51:36.829119",
+        "context": {
+          "errors": [
+            "设备 EXP001: 状态值 '??' 不合法",
+            "设备 EXP002: 状态值 '??' 不合法"
+          ]
+        },
+        "stack_trace": null
+      }
+    ],
+    "permission": {
+      "owner": "admin",
+      "allowed_users": [],
+      "permissions": {
+        "view": [],
+        "export": [],
+        "undo": []
+      }
+    },
+    "end_time": null
   }
 ]

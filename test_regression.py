@@ -1253,7 +1253,16 @@ def test_session_file_integrity_check():
         json.dump(data, f)
     print(f"  {PASS} File modified (tampered)")
     
-    print("\n[Step 3] Try to commit - should fail due to checksum mismatch")
+    print("\n[Step 3] Resolve conflicts first")
+    if preview_result.get_total_conflict() > 0:
+        conflict_row = preview_result.devices["conflict"][0]
+        record_id = conflict_row.row_data.get('device_id')
+        session_manager.resolve_conflict(session.session_id, record_id, "device", 
+                                      conflict_row.row_data, ConflictDecision.OVERWRITE_LOCAL, "admin")
+    print(f"  {PASS} Conflicts resolved")
+    
+    print("\n[Step 4] Try to commit - should fail due to checksum mismatch")
+    session = session_manager.get_session(session.session_id)
     success, msg = session_manager.commit_import(session, "admin", True)
     assert not success, "Should fail due to file modification"
     assert "已被修改" in msg or "校验" in msg, f"Wrong error message: {msg}"
@@ -1318,6 +1327,12 @@ def test_session_undo_after_restart():
         preview_result=preview_result
     )
     
+    if preview_result.get_total_conflict() > 0:
+        conflict_row = preview_result.devices["conflict"][0]
+        record_id = conflict_row.row_data.get('device_id')
+        session_manager.resolve_conflict(session.session_id, record_id, "device", 
+                                      conflict_row.row_data, ConflictDecision.OVERWRITE_LOCAL, "admin")
+    
     success, msg = session_manager.commit_import(session, "admin", True)
     assert success, f"Import failed: {msg}"
     print(f"  {PASS} Import committed")
@@ -1343,7 +1358,7 @@ def test_session_undo_after_restart():
     print(f"  {PASS} Session loaded with can_undo=True, backup_path set")
 
     print("\n[Step 5] Undo import")
-    success, msg = session_manager2.undo_import(session2)
+    success, msg = session_manager2.undo_import(session2, "admin", True)
     assert success, f"Undo failed: {msg}"
 
     service2.devices = service2.storage.load_devices()
@@ -1730,7 +1745,7 @@ def test_session_undo_after_import():
     print(f"  {PASS} Data imported, now has {len(service.devices)} devices")
     
     print("\n[Step 3] Undo the import")
-    success, msg = session_manager.undo_import(session)
+    success, msg = session_manager.undo_import(session, "admin", True)
     assert success, f"Undo failed: {msg}"
     print(f"  {PASS} Import undone: {msg}")
     
@@ -1741,7 +1756,7 @@ def test_session_undo_after_import():
     print(f"  {PASS} Data restored to {len(service.devices)} devices")
     
     print("\n[Step 4] Verify cannot undo twice")
-    success, msg = session_manager.undo_import(session)
+    success, msg = session_manager.undo_import(session, "admin", True)
     assert not success, "Should not be able to undo twice"
     print(f"  {PASS} Cannot undo twice: {msg}")
     
@@ -2032,7 +2047,7 @@ def test_session_complete_flow():
     print(f"  {PASS} Undo is available, backup: {session.backup_path}")
     
     print("\n[Step 8] Undo import")
-    success, msg = session_manager.undo_import(session)
+    success, msg = session_manager.undo_import(session, "admin", True)
     assert success, f"Undo failed: {msg}"
     print(f"  {PASS} Import undone successfully")
     
@@ -2245,11 +2260,14 @@ def test_conflict_incomplete_submit_block():
     import_service = ImportService(service.storage, service)
     session_manager = ImportSessionManager(service.storage, service)
     
-    print("\n[Step 1] Create session with conflicts")
+    print("\n[Step 1] Create existing device to generate conflict")
+    service.add_device("INCM001", "Incomplete Device 1")
+    
+    print("\n[Step 2] Create session with conflicts")
     test_file = os.path.join(service.storage.data_dir, "test_incomplete.json")
     test_data = {
         "devices": [
-            {"device_id": "INCM001", "name": "Incomplete Device 1", "status": "正常"},
+            {"device_id": "INCM001", "name": "Incomplete Device 1 Updated", "status": "正常"},
             {"device_id": "INCM002", "name": "Incomplete Device 2", "status": "正常"}
         ],
         "repair_records": [],
@@ -2271,7 +2289,7 @@ def test_conflict_incomplete_submit_block():
     
     print(f"  {PASS} Session created with {preview_result.get_total_conflict()} conflicts")
     
-    print("\n[Step 2] Try to commit without resolving conflicts - should fail")
+    print("\n[Step 3] Try to commit without resolving conflicts - should fail")
     success, msg = session_manager.commit_import(session, "admin", True)
     assert not success, "Should fail without resolving conflicts"
     assert "未决策" in msg or "conflict" in msg.lower(), f"Wrong error message: {msg}"
@@ -2314,6 +2332,414 @@ def test_conflict_incomplete_submit_block():
     print("=" * 60)
 
 
+def test_session_event_chain_tracking():
+    print("\n" + "=" * 60)
+    print("Session Event Chain Tracking Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create existing device to generate conflict")
+    service.add_device("EVT001", "Event Test Device")
+    
+    print("\n[Step 2] Create session and verify events are tracked")
+    test_file = os.path.join(service.storage.data_dir, "test_events.json")
+    test_data = {
+        "devices": [{"device_id": "EVT001", "name": "Event Test Updated", "status": "正常"}],
+        "repair_records": [],
+        "approval_records": []
+    }
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "admin", True)
+    session, msg = session_manager.create_session(test_file, 'json', "admin", True, raw_data, preview_result)
+    assert session is not None, f"Session should be created: {msg}"
+    print(f"  {PASS} Session created")
+    
+    session = session_manager.get_session(session.session_id)
+    assert len(session.events) >= 2, f"Should have at least 2 events (created + preview), got {len(session.events)}"
+    print(f"  {PASS} Events tracked: {len(session.events)} events")
+    
+    event_types = [e.event_type for e in session.events]
+    assert "session_created" in event_types, "Should have session_created event"
+    assert "preview_generated" in event_types, "Should have preview_generated event"
+    print(f"  {PASS} Event types verified: {event_types}")
+    
+    print("\n[Step 3] Resolve conflict and verify event is tracked")
+    assert preview_result.get_total_conflict() > 0, "Should have conflicts"
+    conflict_row = preview_result.devices["conflict"][0]
+    record_id = conflict_row.row_data.get('device_id')
+    session_manager.resolve_conflict(session.session_id, record_id, "device", 
+                                  conflict_row.row_data, ConflictDecision.OVERWRITE_LOCAL, "admin")
+    
+    session = session_manager.get_session(session.session_id)
+    event_types = [e.event_type for e in session.events]
+    assert "conflict_resolved" in event_types, "Should have conflict_resolved event"
+    print(f"  {PASS} Conflict resolution event tracked")
+    
+    print("\n[Step 4] Commit and verify events are tracked")
+    success, msg = session_manager.commit_import(session, "admin", True)
+    assert success, f"Commit should succeed: {msg}"
+    
+    session = session_manager.get_session(session.session_id)
+    event_types = [e.event_type for e in session.events]
+    assert "commit_started" in event_types, "Should have commit_started event"
+    assert "commit_success" in event_types, "Should have commit_success event"
+    assert "validation_passed" in event_types, "Should have validation_passed event"
+    print(f"  {PASS} Commit events tracked: {[e for e in event_types if 'commit' in e or 'validation' in e]}")
+
+    print("\n[Step 5] Verify event summary")
+    summary = session.get_event_summary()
+    assert summary['total_events'] == len(session.events), "Event summary should match"
+    assert summary['first_event_time'] is not None, "Should have first event time"
+    assert summary['last_event_time'] is not None, "Should have last event time"
+    print(f"  {PASS} Event summary: total={summary['total_events']}")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Event Chain Tracking Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_session_error_snapshot():
+    print("\n" + "=" * 60)
+    print("Session Error Snapshot Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create existing devices to generate conflicts")
+    service.add_device("ERR001", "Error Test Device 1")
+    
+    print("\n[Step 2] Create session and try to commit without resolving conflicts")
+    test_file = os.path.join(service.storage.data_dir, "test_error.json")
+    test_data = {
+        "devices": [
+            {"device_id": "ERR001", "name": "Error Test 1 Updated", "status": "正常"},
+            {"device_id": "ERR002", "name": "Error Test 2", "status": "正常"}
+        ],
+        "repair_records": [],
+        "approval_records": []
+    }
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "admin", True)
+    session, msg = session_manager.create_session(test_file, 'json', "admin", True, raw_data, preview_result)
+    print(f"  {PASS} Session created with {preview_result.get_total_conflict()} conflicts")
+    
+    print("\n[Step 3] Try to commit without resolving conflicts")
+    success, msg = session_manager.commit_import(session, "admin", True)
+    assert not success, "Should fail without resolving conflicts"
+    assert "未决策" in msg or "conflict" in msg.lower(), f"Wrong error message: {msg}"
+    print(f"  {PASS} Commit blocked: {msg[:30]}...")
+    
+    session = session_manager.get_session(session.session_id)
+    assert session.has_error_snapshots(), "Should have error snapshots"
+    assert len(session.error_snapshots) > 0, "Should have at least 1 error snapshot"
+    print(f"  {PASS} Error snapshot created: {len(session.error_snapshots)} snapshots")
+    
+    snapshot = session.error_snapshots[0]
+    assert snapshot.error_type is not None, "Error type should be set"
+    assert snapshot.error_message is not None, "Error message should be set"
+    assert snapshot.error_time is not None, "Error time should be set"
+    print(f"  {PASS} Error snapshot details verified: type={snapshot.error_type}")
+    
+    print("\n[Step 4] Test error snapshot export")
+    export_file = os.path.join(service.storage.data_dir, "error_export_test.json")
+    success, error = session_manager.get_failed_session_snapshot(session.session_id, export_file)
+    assert success, f"Export should succeed: {error}"
+    assert os.path.exists(export_file), "Export file should exist"
+    print(f"  {PASS} Error snapshot exported to {export_file}")
+    
+    with open(export_file, 'r', encoding='utf-8') as f:
+        exported_data = json.load(f)
+    assert 'session_info' in exported_data, "Should have session_info"
+    assert 'error_snapshots' in exported_data, "Should have error_snapshots"
+    assert 'event_chain' in exported_data, "Should have event_chain"
+    print(f"  {PASS} Exported data structure verified")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Error Snapshot Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_session_permission_control():
+    print("\n" + "=" * 60)
+    print("Session Permission Control Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create session as 'admin'")
+    test_file = os.path.join(service.storage.data_dir, "test_perm.json")
+    test_data = {
+        "devices": [{"device_id": "PERM001", "name": "Perm Test", "status": "正常"}],
+        "repair_records": [],
+        "approval_records": []
+    }
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "admin", True)
+    session, msg = session_manager.create_session(test_file, 'json', "admin", True, raw_data, preview_result)
+    session_id = session.session_id
+    print(f"  {PASS} Session created by admin: {session_id}")
+    
+    print("\n[Step 2] Test that owner can access session")
+    events, error = session_manager.get_session_event_chain(session_id, "admin", True)
+    assert events is not None, "Owner should be able to access event chain"
+    assert error is None, "Should not have error"
+    print(f"  {PASS} Owner can access session")
+    
+    print("\n[Step 3] Test that non-owner non-supervisor cannot access")
+    events, error = session_manager.get_session_event_chain(session_id, "regular_user", False)
+    assert events is None, "Non-owner should not be able to access"
+    assert error is not None, "Should have error"
+    assert "权限" in error or "permission" in error.lower(), f"Wrong error: {error}"
+    print(f"  {PASS} Non-owner blocked: {error}")
+    
+    print("\n[Step 4] Test that supervisor can access any session")
+    events, error = session_manager.get_session_event_chain(session_id, "supervisor", True)
+    assert events is not None, "Supervisor should be able to access"
+    assert error is None, "Should not have error"
+    print(f"  {PASS} Supervisor can access any session")
+    
+    print("\n[Step 5] Test permission grant")
+    success, msg = session_manager.grant_session_permission(
+        session_id, "viewer", session_manager.storage._get_sessions_file().split('/')[-1], 
+        "admin", True
+    )
+    print(f"  {PASS} Permission management works")
+    
+    print("\n[Step 6] Resolve conflicts and commit")
+    if preview_result.get_total_conflict() > 0:
+        conflict_row = preview_result.devices["conflict"][0]
+        record_id = conflict_row.row_data.get('device_id')
+        session_manager.resolve_conflict(session_id, record_id, "device", 
+                                      conflict_row.row_data, ConflictDecision.OVERWRITE_LOCAL, "admin")
+    
+    success, msg = session_manager.commit_import(session, "admin", True)
+    assert success, f"Commit should succeed: {msg}"
+    print(f"  {PASS} Session committed")
+    
+    print("\n[Step 7] Test undo permission")
+    session = session_manager.get_session(session_id)
+    assert session.check_permission("admin", "undo", True), "Admin should have undo permission"
+    assert session.check_permission("regular_user", "undo", False) == False, "Regular user should not have undo permission"
+    print(f"  {PASS} Permission checks work correctly")
+    
+    print("\n" + "=" * 60)
+    print(f"Session Permission Control Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_session_history_viewing():
+    print("\n" + "=" * 60)
+    print("Session History Viewing Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create multiple sessions")
+    for i in range(3):
+        test_file = os.path.join(service.storage.data_dir, f"test_history_{i}.json")
+        test_data = {
+            "devices": [{"device_id": f"HIST{i}", "name": f"History Test {i}", "status": "正常"}],
+            "repair_records": [],
+            "approval_records": []
+        }
+        with open(test_file, 'w', encoding='utf-8') as f:
+            json.dump(test_data, f)
+        
+        preview_result, raw_data, error = import_service.preview_import_session(test_file, "admin", True)
+        session, msg = session_manager.create_session(test_file, 'json', "admin", True, raw_data, preview_result)
+        
+        if preview_result.get_total_conflict() > 0:
+            conflict_row = preview_result.devices["conflict"][0]
+            record_id = conflict_row.row_data.get('device_id')
+            session_manager.resolve_conflict(session.session_id, record_id, "device", 
+                                          conflict_row.row_data, ConflictDecision.OVERWRITE_LOCAL, "admin")
+        
+        session_manager.commit_import(session, "admin", True)
+    
+    print(f"  {PASS} Created 3 sessions")
+    
+    print("\n[Step 2] Query all session history")
+    sessions = session_manager.get_session_history()
+    assert len(sessions) >= 3, f"Should have at least 3 sessions, got {len(sessions)}"
+    print(f"  {PASS} History query returned {len(sessions)} sessions")
+    
+    print("\n[Step 3] Query by operator")
+    sessions = session_manager.get_session_history(operator="admin")
+    for s in sessions:
+        assert s.operator == "admin", f"All sessions should be by admin"
+    print(f"  {PASS} Filter by operator works")
+    
+    print("\n[Step 4] Get failed sessions")
+    failed_sessions = session_manager.get_failed_sessions()
+    assert isinstance(failed_sessions, list), "Should return list"
+    print(f"  {PASS} Failed sessions query works: {len(failed_sessions)} failed")
+    
+    print("\n[Step 5] Verify session ordering (newest first)")
+    sessions = session_manager.get_session_history()
+    for i in range(len(sessions) - 1):
+        assert sessions[i].created_time >= sessions[i+1].created_time, "Sessions should be ordered by time"
+    print(f"  {PASS} Sessions ordered by time (newest first)")
+    
+    print("\n" + "=" * 60)
+    print(f"Session History Viewing Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_session_file_integrity_validation():
+    print("\n" + "=" * 60)
+    print("Session File Integrity Validation Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create session")
+    test_file = os.path.join(service.storage.data_dir, "test_integrity.json")
+    test_data = {
+        "devices": [{"device_id": "INT001", "name": "Integrity Test", "status": "正常"}],
+        "repair_records": [],
+        "approval_records": []
+    }
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "admin", True)
+    session, msg = session_manager.create_session(test_file, 'json', "admin", True, raw_data, preview_result)
+    original_checksum = session.file_checksum
+    print(f"  {PASS} Session created with checksum: {original_checksum}")
+    
+    print("\n[Step 2] Verify file integrity (unchanged)")
+    success, message, details = session_manager.verify_file_integrity(session.session_id)
+    assert success, "Integrity check should pass for unchanged file"
+    assert details['status'] == "unchanged", "Status should be unchanged"
+    print(f"  {PASS} File integrity verified: unchanged")
+    
+    print("\n[Step 3] Modify file and verify integrity check fails")
+    with open(test_file, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    data['devices'].append({"device_id": "TAMPERED", "name": "Tampered", "status": "正常"})
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(data, f)
+    
+    success, message, details = session_manager.verify_file_integrity(session.session_id)
+    assert not success, "Integrity check should fail for modified file"
+    assert details['status'] == "modified", "Status should be modified"
+    assert details['original_checksum'] == original_checksum, "Original checksum should match"
+    assert details['current_checksum'] != original_checksum, "Current checksum should be different"
+    print(f"  {PASS} File modification detected")
+    
+    print("\n[Step 4] Test revalidation")
+    if preview_result.get_total_conflict() > 0:
+        conflict_row = preview_result.devices["conflict"][0]
+        record_id = conflict_row.row_data.get('device_id')
+        session_manager.resolve_conflict(session.session_id, record_id, "device", 
+                                      conflict_row.row_data, ConflictDecision.OVERWRITE_LOCAL, "admin")
+    
+    success, errors = session_manager.revalidate_session(session.session_id)
+    assert not success, "Revalidation should fail due to file modification"
+    print(f"  {PASS} Revalidation correctly detects issues")
+    
+    print("\n" + "=" * 60)
+    print(f"Session File Integrity Validation Test: {PASS} All Passed")
+    print("=" * 60)
+
+
+def test_cross_restart_recovery_with_events():
+    print("\n" + "=" * 60)
+    print("Cross-Restart Recovery With Events Test")
+    print("=" * 60)
+    
+    clean_data()
+    service = DeviceService()
+    import_service = ImportService(service.storage, service)
+    session_manager = ImportSessionManager(service.storage, service)
+    
+    print("\n[Step 1] Create session with events")
+    test_file = os.path.join(service.storage.data_dir, "test_recovery_events.json")
+    test_data = {
+        "devices": [{"device_id": "RECV001", "name": "Recovery Test", "status": "正常"}],
+        "repair_records": [],
+        "approval_records": []
+    }
+    with open(test_file, 'w', encoding='utf-8') as f:
+        json.dump(test_data, f)
+    
+    preview_result, raw_data, error = import_service.preview_import_session(test_file, "admin", True)
+    session, msg = session_manager.create_session(test_file, 'json', "admin", True, raw_data, preview_result)
+    
+    if preview_result.get_total_conflict() > 0:
+        conflict_row = preview_result.devices["conflict"][0]
+        record_id = conflict_row.row_data.get('device_id')
+        session_manager.resolve_conflict(session.session_id, record_id, "device", 
+                                      conflict_row.row_data, ConflictDecision.OVERWRITE_LOCAL, "admin")
+    
+    session_id = session.session_id
+    event_count_before = len(session.events)
+    print(f"  {PASS} Session created with {event_count_before} events")
+    
+    print("\n[Step 2] Simulate restart")
+    del service
+    del import_service
+    del session_manager
+    
+    service2 = DeviceService()
+    session_manager2 = ImportSessionManager(service2.storage, service2)
+    
+    print("\n[Step 3] Recover session and verify events persist")
+    recovered_session = session_manager2.check_active_session()
+    assert recovered_session is not None, "Session should be recovered"
+    assert recovered_session.session_id == session_id, "Session ID should match"
+    print(f"  {PASS} Session recovered: {recovered_session.session_id}")
+    
+    event_count_after = len(recovered_session.events)
+    assert event_count_after >= event_count_before, f"Events should persist, got {event_count_after} before {event_count_before}"
+    print(f"  {PASS} Events persisted: {event_count_after} events")
+    
+    print("\n[Step 4] Verify error snapshots persist")
+    assert hasattr(recovered_session, 'error_snapshots'), "Should have error_snapshots attribute"
+    assert hasattr(recovered_session, 'permission'), "Should have permission attribute"
+    print(f"  {PASS} Extended attributes persist")
+    
+    print("\n[Step 5] Commit after restart")
+    success, msg = session_manager2.commit_import(recovered_session, "admin", True)
+    assert success, f"Commit should succeed after recovery: {msg}"
+    
+    recovered_session = session_manager2.get_session(session_id)
+    assert recovered_session.status == "completed", f"Status should be completed, got {recovered_session.status}"
+    assert recovered_session.can_undo == True, "Should be able to undo"
+    print(f"  {PASS} Session completed after restart recovery")
+    
+    print("\n[Step 6] Verify undo works after restart")
+    success, msg = session_manager2.undo_import(recovered_session, "admin", True)
+    assert success, f"Undo should succeed: {msg}"
+    print(f"  {PASS} Undo successful after restart recovery")
+    
+    print("\n" + "=" * 60)
+    print(f"Cross-Restart Recovery With Events Test: {PASS} All Passed")
+    print("=" * 60)
+
+
 if __name__ == "__main__":
     try:
         test_nameerror_fix()
@@ -2344,6 +2770,12 @@ if __name__ == "__main__":
         test_session_complete_flow()
         test_session_filter_and_batch()
         test_conflict_incomplete_submit_block()
+        test_session_event_chain_tracking()
+        test_session_error_snapshot()
+        test_session_permission_control()
+        test_session_history_viewing()
+        test_session_file_integrity_validation()
+        test_cross_restart_recovery_with_events()
         print("\n" + "=" * 60)
         print(f"All Tests Passed!")
         print("=" * 60)

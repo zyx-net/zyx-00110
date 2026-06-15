@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime
 from model.device import Device, RepairRecord, ApprovalRecord, Config, ImportLog, RollbackState
 from model.device import ImportSession, SessionImportLog
 
@@ -201,3 +202,87 @@ class JSONStorage:
             return True
         except Exception:
             return False
+
+    def load_all_sessions(self):
+        try:
+            if not os.path.exists(self._get_sessions_file()):
+                return []
+            with open(self._get_sessions_file(), "r", encoding="utf-8") as f:
+                sessions = json.load(f)
+                return [ImportSession.from_dict(s) for s in sessions]
+        except Exception:
+            return []
+
+    def get_sessions_by_time_range(self, start_time=None, end_time=None, operator=None):
+        sessions = self.load_all_sessions()
+        result = []
+        for session in sessions:
+            if operator and session.operator != operator:
+                continue
+            if start_time and session.created_time < start_time:
+                continue
+            if end_time and session.created_time > end_time:
+                continue
+            result.append(session)
+        result.sort(key=lambda x: x.created_time, reverse=True)
+        return result
+
+    def get_sessions_by_status(self, status):
+        sessions = self.load_all_sessions()
+        return [s for s in sessions if s.status == status]
+
+    def get_failed_sessions(self):
+        sessions = self.load_all_sessions()
+        return [s for s in sessions if s.status == ImportSession.STATUS_FAILED]
+
+    def get_session_history(self, session_id=None, limit=50):
+        sessions = self.load_all_sessions()
+        if session_id:
+            sessions = [s for s in sessions if s.session_id == session_id]
+        sessions.sort(key=lambda x: x.created_time, reverse=True)
+        return sessions[:limit]
+
+    def export_session_snapshot(self, session, file_path):
+        try:
+            snapshot = {
+                "session_info": {
+                    "session_id": session.session_id,
+                    "file_path": session.file_path,
+                    "file_type": session.file_type,
+                    "operator": session.operator,
+                    "is_supervisor": session.is_supervisor,
+                    "created_time": session.created_time,
+                    "updated_time": session.updated_time,
+                    "status": session.status,
+                    "committed": session.committed,
+                    "commit_time": session.commit_time,
+                    "result_message": session.result_message,
+                    "can_undo": session.can_undo
+                },
+                "event_chain": [e.to_dict() for e in session.events],
+                "error_snapshots": [s.to_dict() for s in session.error_snapshots],
+                "conflict_resolutions": [r.to_dict() for r in session.conflict_resolutions],
+                "preview_summary": None,
+                "export_time": datetime.now().isoformat()
+            }
+            if session.preview_result:
+                snapshot["preview_summary"] = {
+                    "devices": {k: len(v) for k, v in session.preview_result.devices.items()},
+                    "repair_records": {k: len(v) for k, v in session.preview_result.repair_records.items()},
+                    "approval_records": {k: len(v) for k, v in session.preview_result.approval_records.items()}
+                }
+            if session.raw_data:
+                snapshot["raw_data"] = session.raw_data
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, indent=2, ensure_ascii=False)
+            return True, None
+        except Exception as e:
+            return False, str(e)
+
+    def export_failed_session_snapshot(self, session_id, file_path):
+        session = self.get_session(session_id)
+        if not session:
+            return False, "会话不存在"
+        if not session.has_error_snapshots():
+            return False, "会话没有错误快照"
+        return self.export_session_snapshot(session, file_path)

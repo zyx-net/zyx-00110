@@ -1,0 +1,23 @@
+{
+  "devices": [
+    {
+      "device_id": "SESS001",
+      "name": "Session Test Device 1",
+      "status": "正常",
+      "abnormal_desc": "",
+      "create_time": "2026-06-15T06:25:47.929550",
+      "update_time": "2026-06-15T06:25:47.929559"
+    },
+    {
+      "device_id": "SESS002",
+      "name": "Session Test Device 2",
+      "status": "正常",
+      "abnormal_desc": "",
+      "create_time": "2026-06-15T06:25:47.930300",
+      "update_time": "2026-06-15T06:25:47.930307"
+    }
+  ],
+  "repair_records": [],
+  "approval_records": [],
+  "export_time": "2026-06-15T06:25:47.931140"
+}

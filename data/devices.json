@@ -1,10 +1,10 @@
 [
   {
-    "device_id": "R002",
-    "name": "Tamper Device",
+    "device_id": "EXP001",
+    "name": "Export Permission Base",
     "status": "正常",
     "abnormal_desc": "",
-    "create_time": "2026-06-15T05:51:13.185183",
-    "update_time": "2026-06-15T05:51:13.185188"
+    "create_time": "2026-06-15T09:51:36.826799",
+    "update_time": "2026-06-15T09:51:36.826835"
   }
 ]

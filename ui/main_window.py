@@ -1,11 +1,12 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime
+import os
 from service.device_service import DeviceService, SUPERVISORS
 from service.import_service import ImportService
 from service.session_manager import ImportSessionManager
 from model.status import DeviceStatus
-from model.device import ConflictDecision, ImportSession
+from model.device import ConflictDecision, ImportSession, SessionPermission
 import json
 
 
@@ -73,18 +74,21 @@ class DeviceInspectionApp:
         self.import_frame = ttk.Frame(self.notebook)
         self.session_frame = ttk.Frame(self.notebook)
         self.log_frame = ttk.Frame(self.notebook)
+        self.session_center_frame = ttk.Frame(self.notebook)
 
         self.notebook.add(self.device_frame, text="设备管理")
         self.notebook.add(self.config_frame, text="系统配置")
         self.notebook.add(self.import_frame, text="数据导入")
         self.notebook.add(self.session_frame, text="导入会话")
         self.notebook.add(self.log_frame, text="历史日志")
+        self.notebook.add(self.session_center_frame, text="会话中心")
 
         self.setup_device_tab()
         self.setup_config_tab()
         self.setup_import_tab()
         self.setup_session_tab()
         self.setup_log_tab()
+        self.setup_session_center_tab()
         
     def setup_device_tab(self):
         top_frame = ttk.Frame(self.device_frame)
@@ -1396,6 +1400,381 @@ class DeviceInspectionApp:
     def export_records(self):
         success, msg = self.service.export_records()
         messagebox.showinfo("导出结果", msg)
+
+    def setup_session_center_tab(self):
+        top_frame = ttk.LabelFrame(self.session_center_frame, text="会话历史查询")
+        top_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        filter_frame = ttk.Frame(top_frame)
+        filter_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        ttk.Label(filter_frame, text="操作人:").pack(side=tk.LEFT, padx=5)
+        self.center_operator_entry = ttk.Entry(filter_frame, width=20)
+        self.center_operator_entry.pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(filter_frame, text="状态:").pack(side=tk.LEFT, padx=5)
+        self.center_status_filter = ttk.Combobox(filter_frame, values=["全部", "进行中", "待确认", "已完成", "已取消", "失败"], width=15)
+        self.center_status_filter.current(0)
+        self.center_status_filter.pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(filter_frame, text="查询", command=self.query_session_history).pack(side=tk.LEFT, padx=5)
+        ttk.Button(filter_frame, text="查看失败会话", command=self.show_failed_sessions).pack(side=tk.LEFT, padx=5)
+
+        self.session_center_tree = ttk.Treeview(self.session_center_frame, 
+            columns=("会话ID", "文件", "操作人", "状态", "创建时间", "结束时间", "事件数", "错误数"), 
+            show="headings", height=15)
+        self.session_center_tree.heading("会话ID", text="会话ID")
+        self.session_center_tree.heading("文件", text="文件")
+        self.session_center_tree.heading("操作人", text="操作人")
+        self.session_center_tree.heading("状态", text="状态")
+        self.session_center_tree.heading("创建时间", text="创建时间")
+        self.session_center_tree.heading("结束时间", text="结束时间")
+        self.session_center_tree.heading("事件数", text="事件数")
+        self.session_center_tree.heading("错误数", text="错误数")
+
+        self.session_center_tree.column("会话ID", width=150)
+        self.session_center_tree.column("文件", width=200)
+        self.session_center_tree.column("操作人", width=80)
+        self.session_center_tree.column("状态", width=80)
+        self.session_center_tree.column("创建时间", width=150)
+        self.session_center_tree.column("结束时间", width=150)
+        self.session_center_tree.column("事件数", width=60)
+        self.session_center_tree.column("错误数", width=60)
+
+        self.session_center_tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        self.session_center_tree.bind("<Double-Button-1>", self.on_session_center_double_click)
+
+        action_frame = ttk.Frame(self.session_center_frame)
+        action_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Button(action_frame, text="查看事件链", command=self.view_session_event_chain).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="查看错误快照", command=self.view_error_snapshots).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="导出错误快照", command=self.export_error_snapshot).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="校验文件完整性", command=self.verify_file_integrity_gui).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="权限管理", command=self.manage_session_permissions).pack(side=tk.LEFT, padx=5)
+        ttk.Button(action_frame, text="重新校验", command=self.revalidate_session_gui).pack(side=tk.LEFT, padx=5)
+
+        self.query_session_history()
+
+    def query_session_history(self):
+        for item in self.session_center_tree.get_children():
+            self.session_center_tree.delete(item)
+
+        operator = self.center_operator_entry.get().strip() or None
+        sessions = self.session_manager.get_session_history(operator=operator)
+
+        status_filter = self.center_status_filter.get()
+        status_map = {
+            "全部": None,
+            "进行中": ImportSession.STATUS_IN_PROGRESS,
+            "待确认": ImportSession.STATUS_WAITING_CONFIRM,
+            "已完成": ImportSession.STATUS_COMPLETED,
+            "已取消": ImportSession.STATUS_CANCELLED,
+            "失败": ImportSession.STATUS_FAILED
+        }
+        filter_status = status_map.get(status_filter)
+
+        for session in sessions:
+            if filter_status and session.status != filter_status:
+                continue
+
+            status_text = {
+                ImportSession.STATUS_PENDING: "待处理",
+                ImportSession.STATUS_IN_PROGRESS: "进行中",
+                ImportSession.STATUS_WAITING_CONFIRM: "待确认",
+                ImportSession.STATUS_COMPLETED: "已完成",
+                ImportSession.STATUS_CANCELLED: "已取消",
+                ImportSession.STATUS_FAILED: "失败"
+            }.get(session.status, session.status)
+
+            file_name = os.path.basename(session.file_path) if session.file_path else "-"
+            created_time = session.created_time.split("T")[1][:8] if session.created_time else "-"
+            end_time = session.end_time.split("T")[1][:8] if session.end_time else "-"
+            event_count = len(session.events)
+            error_count = len(session.error_snapshots)
+
+            self.session_center_tree.insert("", tk.END, values=(
+                session.session_id,
+                file_name,
+                session.operator or "-",
+                status_text,
+                created_time,
+                end_time,
+                event_count,
+                error_count
+            ))
+
+    def show_failed_sessions(self):
+        failed_sessions = self.session_manager.get_failed_sessions()
+        if not failed_sessions:
+            messagebox.showinfo("提示", "没有失败的会话")
+            return
+
+        for item in self.session_center_tree.get_children():
+            self.session_center_tree.delete(item)
+
+        for session in failed_sessions:
+            status_text = "失败"
+            file_name = os.path.basename(session.file_path) if session.file_path else "-"
+            created_time = session.created_time.split("T")[1][:8] if session.created_time else "-"
+            end_time = session.end_time.split("T")[1][:8] if session.end_time else "-"
+            event_count = len(session.events)
+            error_count = len(session.error_snapshots)
+
+            self.session_center_tree.insert("", tk.END, values=(
+                session.session_id,
+                file_name,
+                session.operator or "-",
+                status_text,
+                created_time,
+                end_time,
+                event_count,
+                error_count
+            ))
+
+    def on_session_center_double_click(self, event):
+        self.view_session_event_chain()
+
+    def view_session_event_chain(self):
+        selected = self.session_center_tree.selection()
+        if not selected:
+            messagebox.showwarning("提示", "请先选择一个会话")
+            return
+
+        session_id = self.session_center_tree.item(selected[0])['values'][0]
+        events, error = self.session_manager.get_session_event_chain(
+            session_id, 
+            self.current_user, 
+            self.is_supervisor
+        )
+
+        if error:
+            messagebox.showerror("错误", error)
+            return
+
+        chain_window = tk.Toplevel(self.root)
+        chain_window.title(f"事件链 - {session_id}")
+        chain_window.geometry("700x500")
+
+        text = tk.Text(chain_window, wrap=tk.WORD, width=80, height=25)
+        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        event_type_map = {
+            "session_created": "会话创建",
+            "file_checked": "文件校验",
+            "preview_generated": "预览生成",
+            "conflict_resolved": "冲突解决",
+            "conflict_batch_resolved": "批量冲突解决",
+            "validation_started": "校验开始",
+            "validation_passed": "校验通过",
+            "validation_failed": "校验失败",
+            "commit_started": "提交开始",
+            "commit_success": "提交成功",
+            "commit_failed": "提交失败",
+            "undo_started": "撤销开始",
+            "undo_success": "撤销成功",
+            "undo_failed": "撤销失败",
+            "session_cancelled": "会话取消",
+            "session_resumed": "会话恢复"
+        }
+
+        text.insert(tk.END, f"会话ID: {session_id}\n")
+        text.insert(tk.END, f"事件总数: {len(events)}\n\n")
+        text.insert(tk.END, "=" * 60 + "\n")
+        text.insert(tk.END, "事件链详情:\n")
+        text.insert(tk.END, "=" * 60 + "\n\n")
+
+        for i, event in enumerate(events, 1):
+            event_type_text = event_type_map.get(event.event_type, event.event_type)
+            text.insert(tk.END, f"[{i}] {event.event_time}\n")
+            text.insert(tk.END, f"    类型: {event_type_text}\n")
+            text.insert(tk.END, f"    操作人: {event.operator or '系统'}\n")
+            if event.details:
+                text.insert(tk.END, f"    详情: {json.dumps(event.details, ensure_ascii=False, indent=4)}\n")
+            text.insert(tk.END, "-" * 40 + "\n")
+
+        scrollbar = tk.Scrollbar(text, command=text.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text.config(yscrollcommand=scrollbar.set)
+
+    def view_error_snapshots(self):
+        selected = self.session_center_tree.selection()
+        if not selected:
+            messagebox.showwarning("提示", "请先选择一个会话")
+            return
+
+        session_id = self.session_center_tree.item(selected[0])['values'][0]
+        session = self.session_manager.get_session(session_id)
+
+        if not session:
+            messagebox.showerror("错误", "会话不存在")
+            return
+
+        if not session.error_snapshots:
+            messagebox.showinfo("提示", "此会话没有错误快照")
+            return
+
+        error_window = tk.Toplevel(self.root)
+        error_window.title(f"错误快照 - {session_id}")
+        error_window.geometry("700x500")
+
+        text = tk.Text(error_window, wrap=tk.WORD, width=80, height=25)
+        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        text.insert(tk.END, f"会话ID: {session_id}\n")
+        text.insert(tk.END, f"错误总数: {len(session.error_snapshots)}\n\n")
+        text.insert(tk.END, "=" * 60 + "\n")
+        text.insert(tk.END, "错误快照详情:\n")
+        text.insert(tk.END, "=" * 60 + "\n\n")
+
+        for i, snapshot in enumerate(session.error_snapshots, 1):
+            text.insert(tk.END, f"[{i}] {snapshot.error_time}\n")
+            text.insert(tk.END, f"    类型: {snapshot.error_type}\n")
+            text.insert(tk.END, f"    消息: {snapshot.error_message}\n")
+            if snapshot.context:
+                text.insert(tk.END, f"    上下文: {json.dumps(snapshot.context, ensure_ascii=False, indent=4)}\n")
+            if snapshot.stack_trace:
+                text.insert(tk.END, f"    堆栈: {snapshot.stack_trace}\n")
+            text.insert(tk.END, "-" * 40 + "\n")
+
+        scrollbar = tk.Scrollbar(text, command=text.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text.config(yscrollcommand=scrollbar.set)
+
+    def export_error_snapshot(self):
+        selected = self.session_center_tree.selection()
+        if not selected:
+            messagebox.showwarning("提示", "请先选择一个会话")
+            return
+
+        session_id = self.session_center_tree.item(selected[0])['values'][0]
+        session = self.session_manager.get_session(session_id)
+
+        if not session:
+            messagebox.showerror("错误", "会话不存在")
+            return
+
+        if not session.has_error_snapshots():
+            messagebox.showinfo("提示", "此会话没有错误快照可导出")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON文件", "*.json"), ("所有文件", "*.*")],
+            initialfile=f"error_snapshot_{session_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
+
+        if not file_path:
+            return
+
+        success, error = self.session_manager.get_failed_session_snapshot(session_id, file_path)
+        if success:
+            messagebox.showinfo("导出成功", f"错误快照已导出到:\n{file_path}")
+        else:
+            messagebox.showerror("导出失败", error or "未知错误")
+
+    def verify_file_integrity_gui(self):
+        selected = self.session_center_tree.selection()
+        if not selected:
+            messagebox.showwarning("提示", "请先选择一个会话")
+            return
+
+        session_id = self.session_center_tree.item(selected[0])['values'][0]
+        success, message, details = self.session_manager.verify_file_integrity(session_id)
+
+        if success:
+            messagebox.showinfo("文件完整性校验", f"{message}\n校验和: {details['checksum']}")
+        else:
+            response = messagebox.askyesno("文件已被修改", 
+                f"{message}\n\n原始校验和: {details.get('original_checksum', 'N/A')}\n当前校验和: {details.get('current_checksum', 'N/A')}\n\n是否重新选择文件创建新会话？")
+            if response:
+                self.notebook.select(self.session_frame)
+
+    def manage_session_permissions(self):
+        selected = self.session_center_tree.selection()
+        if not selected:
+            messagebox.showwarning("提示", "请先选择一个会话")
+            return
+
+        session_id = self.session_center_tree.item(selected[0])['values'][0]
+        session = self.session_manager.get_session(session_id)
+
+        if not session:
+            messagebox.showerror("错误", "会话不存在")
+            return
+
+        perm_window = tk.Toplevel(self.root)
+        perm_window.title(f"权限管理 - {session_id}")
+        perm_window.geometry("500x400")
+
+        info_frame = ttk.LabelFrame(perm_window, text="会话信息")
+        info_frame.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(info_frame, text=f"会话ID: {session_id}").pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Label(info_frame, text=f"创建者: {session.operator}").pack(anchor=tk.W, padx=5, pady=2)
+
+        perm_frame = ttk.LabelFrame(perm_window, text="权限设置")
+        perm_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        ttk.Label(perm_frame, text="用户名:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        user_entry = ttk.Entry(perm_frame, width=20)
+        user_entry.grid(row=0, column=1, padx=5, pady=5)
+
+        perm_types = [("查看权限", SessionPermission.PERM_VIEW), 
+                      ("导出权限", SessionPermission.PERM_EXPORT), 
+                      ("撤销权限", SessionPermission.PERM_UNDO)]
+        
+        for i, (text, perm) in enumerate(perm_types):
+            ttk.Checkbutton(perm_frame, text=text).grid(row=i+1, column=0, columnspan=2, padx=5, pady=2, sticky=tk.W)
+
+        def grant_permission():
+            user = user_entry.get().strip()
+            if not user:
+                messagebox.showwarning("提示", "请输入用户名")
+                return
+
+            success, msg = self.session_manager.grant_session_permission(
+                session_id, user, SessionPermission.PERM_VIEW, 
+                self.current_user, self.is_supervisor
+            )
+            if success:
+                messagebox.showinfo("成功", msg)
+            else:
+                messagebox.showerror("失败", msg)
+
+        def revoke_permission():
+            user = user_entry.get().strip()
+            if not user:
+                messagebox.showwarning("提示", "请输入用户名")
+                return
+
+            success, msg = self.session_manager.revoke_session_permission(
+                session_id, user, SessionPermission.PERM_VIEW,
+                self.current_user, self.is_supervisor
+            )
+            if success:
+                messagebox.showinfo("成功", msg)
+            else:
+                messagebox.showerror("失败", msg)
+
+        btn_frame = ttk.Frame(perm_window)
+        btn_frame.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Button(btn_frame, text="授予查看权限", command=grant_permission).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="撤销查看权限", command=revoke_permission).pack(side=tk.LEFT, padx=5)
+
+    def revalidate_session_gui(self):
+        selected = self.session_center_tree.selection()
+        if not selected:
+            messagebox.showwarning("提示", "请先选择一个会话")
+            return
+
+        session_id = self.session_center_tree.item(selected[0])['values'][0]
+        success, errors = self.session_manager.revalidate_session(session_id)
+
+        if success:
+            messagebox.showinfo("校验结果", "校验通过，所有依赖关系和必填字段都满足要求")
+        else:
+            error_msg = "\n".join([f"- {e}" for e in errors])
+            messagebox.showwarning("校验失败", f"发现以下问题:\n{error_msg}")
 
 
 if __name__ == "__main__":

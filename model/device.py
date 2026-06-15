@@ -1,4 +1,5 @@
 from datetime import datetime
+import uuid
 from model.status import DeviceStatus
 
 
@@ -411,7 +412,11 @@ class ImportSession:
 
     def __init__(self, session_id=None, file_path=None, file_type=None, operator=None, 
                  is_supervisor=False, created_time=None):
-        self.session_id = session_id or f"SESSION_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        if session_id is None:
+            unique_id = uuid.uuid4().hex[:12]
+            self.session_id = f"SESSION_{datetime.now().strftime('%Y%m%d%H%M%S')}_{unique_id}"
+        else:
+            self.session_id = session_id
         self.file_path = file_path
         self.file_type = file_type
         self.operator = operator
@@ -429,6 +434,10 @@ class ImportSession:
         self.commit_operator = None
         self.result_message = ""
         self.can_undo = False
+        self.events = []
+        self.error_snapshots = []
+        self.permission = SessionPermission(owner=operator)
+        self.end_time = None
 
     def to_dict(self):
         return {
@@ -449,7 +458,11 @@ class ImportSession:
             "commit_time": self.commit_time,
             "commit_operator": self.commit_operator,
             "result_message": self.result_message,
-            "can_undo": self.can_undo
+            "can_undo": self.can_undo,
+            "events": [e.to_dict() for e in self.events],
+            "error_snapshots": [s.to_dict() for s in self.error_snapshots],
+            "permission": self.permission.to_dict() if self.permission else None,
+            "end_time": self.end_time
         }
 
     @classmethod
@@ -475,7 +488,51 @@ class ImportSession:
         session.commit_operator = data.get("commit_operator")
         session.result_message = data.get("result_message", "")
         session.can_undo = data.get("can_undo", False)
+        session.events = [SessionEvent.from_dict(e) for e in data.get("events", [])]
+        session.error_snapshots = [ErrorSnapshot.from_dict(s) for s in data.get("error_snapshots", [])]
+        if data.get("permission"):
+            session.permission = SessionPermission.from_dict(data["permission"])
+        session.end_time = data.get("end_time")
         return session
+
+    def add_event(self, event_type, operator=None, details=None):
+        event = SessionEvent(event_type, operator=operator, details=details)
+        self.events.append(event)
+        self.updated_time = datetime.now().isoformat()
+        return event
+
+    def add_error_snapshot(self, error_type, error_message, context=None, stack_trace=None):
+        snapshot = ErrorSnapshot(error_type, error_message, context=context, stack_trace=stack_trace)
+        self.error_snapshots.append(snapshot)
+        self.updated_time = datetime.now().isoformat()
+        return snapshot
+
+    def get_event_chain(self):
+        return self.events
+
+    def get_event_summary(self):
+        return {
+            "total_events": len(self.events),
+            "event_types": list(set(e.event_type for e in self.events)),
+            "first_event_time": self.events[0].event_time if self.events else None,
+            "last_event_time": self.events[-1].event_time if self.events else None
+        }
+
+    def has_error_snapshots(self):
+        return len(self.error_snapshots) > 0
+
+    def grant_permission(self, user, perm_type):
+        if self.permission:
+            self.permission.grant_permission(user, perm_type)
+
+    def revoke_permission(self, user, perm_type):
+        if self.permission:
+            self.permission.revoke_permission(user, perm_type)
+
+    def check_permission(self, user, perm_type, is_supervisor=False):
+        if self.permission:
+            return self.permission.has_permission(user, perm_type, is_supervisor)
+        return is_supervisor or user == self.operator
 
     def get_conflict_resolution(self, record_id):
         for resolution in self.conflict_resolutions:
@@ -569,3 +626,123 @@ class SessionImportLog:
             message=data.get("message", ""),
             details=data.get("details", {})
         )
+
+
+class SessionEventType:
+    SESSION_CREATED = "session_created"
+    FILE_CHECKED = "file_checked"
+    PREVIEW_GENERATED = "preview_generated"
+    CONFLICT_RESOLVED = "conflict_resolved"
+    CONFLICT_BATCH_RESOLVED = "conflict_batch_resolved"
+    VALIDATION_STARTED = "validation_started"
+    VALIDATION_PASSED = "validation_passed"
+    VALIDATION_FAILED = "validation_failed"
+    COMMIT_STARTED = "commit_started"
+    COMMIT_SUCCESS = "commit_success"
+    COMMIT_FAILED = "commit_failed"
+    UNDO_STARTED = "undo_started"
+    UNDO_SUCCESS = "undo_success"
+    UNDO_FAILED = "undo_failed"
+    SESSION_CANCELLED = "session_cancelled"
+    SESSION_RESUMED = "session_resumed"
+
+
+class SessionEvent:
+    def __init__(self, event_type, event_time=None, operator=None, details=None):
+        self.event_type = event_type
+        self.event_time = event_time or datetime.now().isoformat()
+        self.operator = operator
+        self.details = details or {}
+
+    def to_dict(self):
+        return {
+            "event_type": self.event_type,
+            "event_time": self.event_time,
+            "operator": self.operator,
+            "details": self.details
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            event_type=data["event_type"],
+            event_time=data.get("event_time"),
+            operator=data.get("operator"),
+            details=data.get("details", {})
+        )
+
+
+class ErrorSnapshot:
+    def __init__(self, error_type, error_message, error_time=None, context=None, stack_trace=None):
+        self.error_type = error_type
+        self.error_message = error_message
+        self.error_time = error_time or datetime.now().isoformat()
+        self.context = context or {}
+        self.stack_trace = stack_trace
+
+    def to_dict(self):
+        return {
+            "error_type": self.error_type,
+            "error_message": self.error_message,
+            "error_time": self.error_time,
+            "context": self.context,
+            "stack_trace": self.stack_trace
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            error_type=data.get("error_type", ""),
+            error_message=data.get("error_message", ""),
+            error_time=data.get("error_time"),
+            context=data.get("context", {}),
+            stack_trace=data.get("stack_trace")
+        )
+
+
+class SessionPermission:
+    PERM_VIEW = "view"
+    PERM_EXPORT = "export"
+    PERM_UNDO = "undo"
+
+    def __init__(self, owner, allowed_users=None):
+        self.owner = owner
+        self.allowed_users = allowed_users or set()
+        self.permissions = {
+            self.PERM_VIEW: set(),
+            self.PERM_EXPORT: set(),
+            self.PERM_UNDO: set()
+        }
+
+    def grant_permission(self, user, perm_type):
+        if perm_type in self.permissions:
+            self.permissions[perm_type].add(user)
+
+    def revoke_permission(self, user, perm_type):
+        if perm_type in self.permissions:
+            self.permissions[perm_type].discard(user)
+
+    def has_permission(self, user, perm_type, is_supervisor=False):
+        if is_supervisor:
+            return True
+        if user == self.owner:
+            return True
+        return user in self.permissions.get(perm_type, set())
+
+    def to_dict(self):
+        return {
+            "owner": self.owner,
+            "allowed_users": list(self.allowed_users),
+            "permissions": {k: list(v) for k, v in self.permissions.items()}
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        perm = cls(
+            owner=data.get("owner", ""),
+            allowed_users=set(data.get("allowed_users", []))
+        )
+        perms_data = data.get("permissions", {})
+        for k, v in perms_data.items():
+            perm.permissions[k] = set(v)
+        return perm

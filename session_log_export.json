@@ -1,7 +1,7 @@
 {
-  "log_id": "IMP_20260615031533",
-  "session_id": "SESSION_20260615031533",
-  "import_time": "2026-06-15T03:15:33.653485",
+  "log_id": "IMP_20260615094200",
+  "session_id": "SESSION_20260615094200_41573a021b11",
+  "import_time": "2026-06-15T09:42:00.545071",
   "operator": "admin",
   "is_supervisor": true,
   "total_rows": 2,
@@ -32,7 +32,7 @@
         "record_id": "LOG001",
         "record_type": "device",
         "decision": "保留本地",
-        "decision_time": "2026-06-15T03:15:33.648771"
+        "decision_time": "2026-06-15T09:42:00.540001"
       }
     ]
   }

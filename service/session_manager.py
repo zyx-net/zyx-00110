@@ -1,8 +1,9 @@
 import os
 import hashlib
+import traceback
 from datetime import datetime
 from model.device import ImportSession, SessionPreviewResult, ConflictDecision, SessionImportLog
-from model.device import Device, RepairRecord, ApprovalRecord
+from model.device import Device, RepairRecord, ApprovalRecord, SessionEventType, SessionPermission
 from model.status import DeviceStatus
 from service.backup_service import BackupService
 from storage.json_storage import JSONStorage
@@ -42,8 +43,11 @@ class ImportSessionManager:
     def create_session(self, file_path, file_type, operator, is_supervisor, parsed_data, preview_result):
         existing_session = self.check_active_session()
         if existing_session:
-            return existing_session, "发现未完成的会话，已为您恢复"
-
+            if existing_session.file_path == file_path and not existing_session.committed:
+                existing_session.add_event(SessionEventType.SESSION_RESUMED, operator, {"resumed_from": existing_session.created_time})
+                self.storage.save_session(existing_session)
+                return existing_session, "发现未完成的会话，已为您恢复"
+        
         session = ImportSession(
             file_path=file_path,
             file_type=file_type,
@@ -54,6 +58,19 @@ class ImportSessionManager:
         session.preview_result = preview_result
         session.raw_data = parsed_data
         session.file_checksum = self._calculate_file_checksum(file_path)
+        
+        session.add_event(SessionEventType.SESSION_CREATED, operator, {
+            "file_path": file_path,
+            "file_type": file_type,
+            "file_checksum": session.file_checksum
+        })
+        
+        session.add_event(SessionEventType.PREVIEW_GENERATED, operator, {
+            "total_new": preview_result.get_total_new(),
+            "total_overwrite": preview_result.get_total_overwrite(),
+            "total_conflict": preview_result.get_total_conflict(),
+            "total_invalid": preview_result.get_total_invalid()
+        })
 
         self.storage.save_session(session)
         return session, None
@@ -61,7 +78,7 @@ class ImportSessionManager:
     def get_session(self, session_id):
         return self.storage.get_session(session_id)
 
-    def resume_session(self, session_id=None):
+    def resume_session(self, session_id=None, operator=None, is_supervisor=False):
         if session_id:
             session = self.storage.get_session(session_id)
         else:
@@ -70,6 +87,9 @@ class ImportSessionManager:
         if not session:
             return None, "没有找到未完成的会话"
 
+        if not session.check_permission(operator, SessionPermission.PERM_VIEW, is_supervisor):
+            return None, "没有权限查看此会话"
+
         if session.file_path and os.path.exists(session.file_path):
             current_checksum = self._calculate_file_checksum(session.file_path)
             if current_checksum != session.file_checksum:
@@ -77,9 +97,11 @@ class ImportSessionManager:
         else:
             return None, "会话关联的文件已不存在"
 
+        session.add_event(SessionEventType.SESSION_RESUMED, operator)
+        self.storage.save_session(session)
         return session, None
 
-    def resolve_conflict(self, session_id, record_id, record_type, row_data, decision):
+    def resolve_conflict(self, session_id, record_id, record_type, row_data, decision, operator=None):
         session = self.storage.get_session(session_id)
         if not session:
             return False, "会话不存在"
@@ -89,6 +111,17 @@ class ImportSessionManager:
 
         session.set_conflict_resolution(record_id, record_type, row_data, decision)
         session.updated_time = datetime.now().isoformat()
+
+        decision_map = {
+            ConflictDecision.KEEP_LOCAL: "保留本地",
+            ConflictDecision.OVERWRITE_LOCAL: "覆盖本地",
+            ConflictDecision.SKIP: "跳过"
+        }
+        session.add_event(SessionEventType.CONFLICT_RESOLVED, operator, {
+            "record_id": record_id,
+            "record_type": record_type,
+            "decision": decision_map.get(decision, decision)
+        })
 
         if session.is_all_conflicts_resolved():
             session.status = ImportSession.STATUS_WAITING_CONFIRM
@@ -100,7 +133,7 @@ class ImportSessionManager:
                 return True, None
         return False, "决策保存失败"
 
-    def resolve_conflicts_batch(self, session_id, resolutions):
+    def resolve_conflicts_batch(self, session_id, resolutions, operator=None):
         session = self.storage.get_session(session_id)
         if not session:
             return False, "会话不存在", 0
@@ -122,6 +155,11 @@ class ImportSessionManager:
             success_count += 1
 
         session.updated_time = datetime.now().isoformat()
+        
+        session.add_event(SessionEventType.CONFLICT_BATCH_RESOLVED, operator, {
+            "resolved_count": success_count,
+            "failed_count": len(failed_records)
+        })
 
         if session.is_all_conflicts_resolved():
             session.status = ImportSession.STATUS_WAITING_CONFIRM
@@ -274,30 +312,48 @@ class ImportSessionManager:
         return errors
 
     def commit_import(self, session, operator, is_supervisor):
-        if not is_supervisor:
-            return False, "权限不足：只有主管才能执行导入操作"
-
-        if operator != session.operator and not is_supervisor:
-            return False, "操作人不匹配，只有创建会话的主管或当前主管可以提交"
-
         session = self.storage.get_session(session.session_id)
         if not session:
             return False, "会话不存在"
 
+        if not is_supervisor:
+            session.add_error_snapshot("permission_denied", "权限不足：只有主管才能执行导入操作", {"operator": operator})
+            self.storage.save_session(session)
+            return False, "权限不足：只有主管才能执行导入操作"
+
+        session.add_event(SessionEventType.COMMIT_STARTED, operator)
+
+        if operator != session.operator and not is_supervisor:
+            session.add_error_snapshot("operator_mismatch", f"操作人不匹配，只有创建会话的主管或当前主管可以提交", {"operator": operator, "session_operator": session.operator})
+            self.storage.save_session(session)
+            return False, "操作人不匹配，只有创建会话的主管或当前主管可以提交"
+
         if not session.is_all_conflicts_resolved():
             unresolved = session.get_unresolved_conflicts_count()
+            session.add_error_snapshot("unresolved_conflicts", f"还有 {unresolved} 个冲突项未决策，不能执行导入", {"unresolved_count": unresolved})
+            self.storage.save_session(session)
             return False, f"还有 {unresolved} 个冲突项未决策，不能执行导入"
 
         current_checksum = self._calculate_file_checksum(session.file_path)
         if current_checksum != session.file_checksum:
+            session.add_error_snapshot("file_modified", "文件已被修改，不能执行导入", {"original_checksum": session.file_checksum, "current_checksum": current_checksum})
+            self.storage.save_session(session)
             return False, "文件已被修改，不能执行导入。请重新预览文件"
+
+        session.add_event(SessionEventType.VALIDATION_STARTED, operator)
 
         dependency_errors = self.validate_dependencies(session)
         if dependency_errors:
+            session.add_error_snapshot("dependency_validation_failed", f"依赖关系校验失败: {', '.join(dependency_errors)}", {"errors": dependency_errors})
+            session.add_event(SessionEventType.VALIDATION_FAILED, operator, {"error_count": len(dependency_errors)})
+            self.storage.save_session(session)
             return False, f"依赖关系校验失败:\n" + "\n".join(f"- {e}" for e in dependency_errors)
 
         required_field_errors = self.validate_required_fields(session)
         if required_field_errors:
+            session.add_error_snapshot("required_field_validation_failed", f"必填字段校验失败: {', '.join(required_field_errors)}", {"errors": required_field_errors})
+            session.add_event(SessionEventType.VALIDATION_FAILED, operator, {"error_count": len(required_field_errors)})
+            self.storage.save_session(session)
             return False, f"必填字段校验失败:\n" + "\n".join(f"- {e}" for e in required_field_errors)
 
         from service.device_service import SUPERVISORS
@@ -305,11 +361,17 @@ class ImportSessionManager:
             if record.get('approval_type') == '复机':
                 approver = record.get('approver', '')
                 if approver not in SUPERVISORS:
+                    session.add_error_snapshot("unauthorized_approval", f"审批人 '{approver}' 无复机审批权限", {"approver": approver, "record_id": record.get('record_id')})
+                    self.storage.save_session(session)
                     return False, f"审批人 '{approver}' 无复机审批权限"
+
+        session.add_event(SessionEventType.VALIDATION_PASSED, operator)
 
         log_id = f"IMP_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         success, backup_path, backup_info = self.backup_service.create_backup(log_id)
         if not success:
+            session.add_error_snapshot("backup_failed", f"创建备份失败: {backup_info}")
+            self.storage.save_session(session)
             return False, f"创建备份失败: {backup_info}"
 
         session.backup_path = backup_path
@@ -411,7 +473,21 @@ class ImportSessionManager:
             session.commit_time = datetime.now().isoformat()
             session.commit_operator = operator
             session.can_undo = True
+            session.end_time = datetime.now().isoformat()
             session.result_message = self._generate_result_message(stats)
+            
+            session.add_event(SessionEventType.COMMIT_SUCCESS, operator, {
+                "new_devices": stats['new_devices'],
+                "overwrite_devices": stats['overwrite_devices'],
+                "skipped_devices": stats['skipped_devices'],
+                "new_repairs": stats['new_repairs'],
+                "overwrite_repairs": stats['overwrite_repairs'],
+                "skipped_repairs": stats['skipped_repairs'],
+                "new_approvals": stats['new_approvals'],
+                "overwrite_approvals": stats['overwrite_approvals'],
+                "skipped_approvals": stats['skipped_approvals']
+            })
+            
             self.storage.save_session(session)
 
             import_log = SessionImportLog(
@@ -442,7 +518,17 @@ class ImportSessionManager:
 
         except Exception as e:
             session.status = ImportSession.STATUS_FAILED
+            session.end_time = datetime.now().isoformat()
             session.result_message = f"导入失败: {str(e)}"
+            
+            session.add_error_snapshot(
+                error_type=type(e).__name__,
+                error_message=str(e),
+                context={"operator": operator, "is_supervisor": is_supervisor},
+                stack_trace=traceback.format_exc()
+            )
+            session.add_event(SessionEventType.COMMIT_FAILED, operator, {"error": str(e)})
+            
             self.storage.save_session(session)
 
             error_log = SessionImportLog(
@@ -514,13 +600,22 @@ class ImportSessionManager:
 
         return ", ".join(parts) if parts else "无变更"
 
-    def undo_import(self, session):
+    def undo_import(self, session, operator=None, is_supervisor=False):
+        session = self.storage.get_session(session.session_id) if hasattr(session, 'session_id') else self.storage.get_session(session)
+        if not session:
+            return False, "会话不存在"
+
+        if not session.check_permission(operator, SessionPermission.PERM_UNDO, is_supervisor):
+            return False, "没有权限撤销此会话"
+
         if not session.can_undo:
             return False, "此会话不支持撤销"
 
         if not session.backup_path or not os.path.exists(session.backup_path):
             return False, f"备份目录不存在: {session.backup_path}"
 
+        session.add_event(SessionEventType.UNDO_STARTED, operator)
+        
         try:
             for f in os.listdir(self.storage.data_dir):
                 if f != 'backups' and f != 'rollback_state.json' and f != 'import_sessions.json' and f != 'session_import_logs.json':
@@ -541,7 +636,9 @@ class ImportSessionManager:
                 self.device_service.approval_records = self.storage.load_approval_records()
 
             session.can_undo = False
+            session.end_time = datetime.now().isoformat()
             session.result_message = "已撤销"
+            session.add_event(SessionEventType.UNDO_SUCCESS, operator)
             self.storage.save_session(session)
 
             self.log_undo_result(session.session_id, True, f"撤销成功，数据已恢复")
@@ -549,10 +646,13 @@ class ImportSessionManager:
             return True, f"已撤销会话 {session.session_id} 的导入，数据已恢复"
 
         except Exception as e:
+            session.add_error_snapshot("undo_failed", f"撤销失败: {str(e)}", stack_trace=traceback.format_exc())
+            session.add_event(SessionEventType.UNDO_FAILED, operator, {"error": str(e)})
+            self.storage.save_session(session)
             self.log_undo_result(session.session_id, False, f"撤销失败: {str(e)}")
             return False, f"撤销失败: {str(e)}"
 
-    def cancel_session(self, session_id):
+    def cancel_session(self, session_id, operator=None):
         session = self.storage.get_session(session_id)
         if not session:
             return False, "会话不存在"
@@ -561,6 +661,8 @@ class ImportSessionManager:
             return False, "已提交的会话不能取消"
 
         session.status = ImportSession.STATUS_CANCELLED
+        session.end_time = datetime.now().isoformat()
+        session.add_event(SessionEventType.SESSION_CANCELLED, operator)
         self.storage.save_session(session)
         return True, "会话已取消"
 
@@ -569,3 +671,88 @@ class ImportSessionManager:
 
     def export_session_log(self, log, file_path):
         return self.storage.export_session_log(log, file_path)
+
+    def get_session_history(self, operator=None, start_time=None, end_time=None, limit=50):
+        if operator:
+            return self.storage.get_sessions_by_time_range(start_time, end_time, operator)[:limit]
+        return self.storage.get_session_history(limit=limit)
+
+    def get_failed_sessions(self):
+        return self.storage.get_failed_sessions()
+
+    def get_failed_session_snapshot(self, session_id, file_path):
+        return self.storage.export_failed_session_snapshot(session_id, file_path)
+
+    def get_session_event_chain(self, session_id, operator=None, is_supervisor=False):
+        session = self.storage.get_session(session_id)
+        if not session:
+            return None, "会话不存在"
+
+        if not session.check_permission(operator, SessionPermission.PERM_VIEW, is_supervisor):
+            return None, "没有权限查看此会话"
+
+        return session.get_event_chain(), None
+
+    def check_session_permission(self, session_id, user, perm_type, is_supervisor=False):
+        session = self.storage.get_session(session_id)
+        if not session:
+            return False
+        return session.check_permission(user, perm_type, is_supervisor)
+
+    def grant_session_permission(self, session_id, user, perm_type, operator=None, is_supervisor=False):
+        session = self.storage.get_session(session_id)
+        if not session:
+            return False, "会话不存在"
+
+        if not session.check_permission(operator, SessionPermission.PERM_UNDO, is_supervisor):
+            return False, "没有权限修改此会话的权限"
+
+        session.grant_permission(user, perm_type)
+        self.storage.save_session(session)
+        return True, f"已授予 {user} {perm_type} 权限"
+
+    def revoke_session_permission(self, session_id, user, perm_type, operator=None, is_supervisor=False):
+        session = self.storage.get_session(session_id)
+        if not session:
+            return False, "会话不存在"
+
+        if not session.check_permission(operator, SessionPermission.PERM_UNDO, is_supervisor):
+            return False, "没有权限修改此会话的权限"
+
+        session.revoke_permission(user, perm_type)
+        self.storage.save_session(session)
+        return True, f"已撤销 {user} 的 {perm_type} 权限"
+
+    def verify_file_integrity(self, session_id):
+        session = self.storage.get_session(session_id)
+        if not session:
+            return False, "会话不存在", None
+
+        if not session.file_path or not os.path.exists(session.file_path):
+            return False, "文件不存在", None
+
+        current_checksum = self._calculate_file_checksum(session.file_path)
+        original_checksum = session.file_checksum
+
+        if current_checksum == original_checksum:
+            return True, "文件完整，未被修改", {"checksum": current_checksum, "status": "unchanged"}
+        else:
+            return False, "文件已被修改", {"original_checksum": original_checksum, "current_checksum": current_checksum, "status": "modified"}
+
+    def revalidate_session(self, session_id):
+        session = self.storage.get_session(session_id)
+        if not session:
+            return False, "会话不存在"
+
+        dependency_errors = self.validate_dependencies(session)
+        required_field_errors = self.validate_required_fields(session)
+        
+        all_errors = dependency_errors + required_field_errors
+        
+        if not all_errors:
+            session.add_event(SessionEventType.VALIDATION_PASSED, details={"revalidation": True})
+        else:
+            session.add_event(SessionEventType.VALIDATION_FAILED, details={"revalidation": True, "errors": all_errors})
+        
+        self.storage.save_session(session)
+        return len(all_errors) == 0, all_errors
